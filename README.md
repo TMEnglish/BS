@@ -12,7 +12,7 @@ To clone this repository,
 To run your clone of my repository, you'll need to register it at [MyBinder.org](https://mybinder.org/).
 
 1. Copy-and-paste the URL of your clone where you're asked for a URL.
-2. Copy the line that they give you a link in response.
+2. Copy the link that they give you a link in response.
 3. Edit the README file of the repository, and replace the link for my binder with the link for yours.
 
 That is all.
