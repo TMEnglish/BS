@@ -1,14 +1,27 @@
 /*
-    Extension of William Basener's JavaScript by Tom English.
-    
-    William Basener holds the copyrights for the original code, which I use
-    with his permission.
+Adaptation of an excerpt of the JavaScript in
+
+    Realistic Mutation-Selection Modeling
+    https://people.rit.edu/wfbsma/evolutionary%20dynamics/EvolutionaryModel.html
+    Copyright William Basener
+
+to run from the command line, using Node.js.
+
+Adapted by Tom English with permission of William Basener.
+
+Use of this software is restricted to scholarly investigation of
+
+    "The fundamental theorem of natural selection with mutations,"
+    Basener, W.F. & Sanford, J.C. J. Math. Biol. (2018) 76: 1589.
+    https://doi.org/10.1007/s00285-017-1190-x
+
+Redistribution is prohibited.
 */
 
-//# var AnimateId; unused
+// var AnimateId; unused
 
-//# The follow are the parameters input via HTML in Basener's
-//# webpage. Only the first of them is global in Basener's script.
+// The follow are the parameters input via HTML in Basener's webpage.
+// Only the first of them is global in Basener's script.
 
 const process = require('process');
 
@@ -32,8 +45,12 @@ function Gamma(Z) {
 
 
 function mutationProb(mDiff, mDelta, mt) {
+    // mDiff is the difference in fitness of the offspring from the parent
+    // mDelta is the spacing of discrete fitnesses in the fitness interval
+    // mt is the "mutation distribution type"
+
     if (mt == "Gaussian") {
-        var stdevMutation = /* 0.0005 */ 0.002;  //# 0.002 in BS article
+        var stdevMutation = /* 0.0005 */ 0.002;  // as reported
         GaussianMultiplicativeTerm = 1 / (stdevMutation * Math.sqrt(2 * Math.PI));
         f = GaussianMultiplicativeTerm * Math.exp(-0.5 * Math.pow((mDiff) / stdevMutation, 2));
         f = f * mDelta;
@@ -52,16 +69,32 @@ function mutationProb(mDiff, mDelta, mt) {
         f = f * mDelta;
     }
     if (mt == "Gamma") {
-        if (mDiff == 0) mDiff = -mDelta;
+        if (mDiff == 0)      // If difference in fitness is 0,
+            mDiff = -mDelta; // change it to the minimum negative difference.
+        // Basener considered making the parameters different for the upper
+        // and lower tails.
         var sBarBeneficial = 0.001;
         var sBarDeleterious = 0.001;
         var aBeneficial = 0.5;
         var aDeleterious = 0.5;
         var bBeneficial = aBeneficial / sBarBeneficial;
         var bDeleterious = aDeleterious / sBarDeleterious;
-        if (mDiff > 0) f = (PctBeneficial) * Math.pow(bBeneficial, aBeneficial) * Math.pow(mDiff, aBeneficial - 1) * Math.exp(-bBeneficial * mDiff) / Gamma(aBeneficial);
-        if (mDiff < 0) f = (1 - PctBeneficial) * Math.pow(bDeleterious, aDeleterious) * Math.pow(Math.abs(mDiff), aDeleterious - 1) * Math.exp(-bDeleterious * Math.abs(mDiff)) / Gamma(aDeleterious);
-        f = f * mDelta;
+        if (mDiff > 0)
+            // Simple scaling by PctBeneficial tacitly assumes that the mass
+            // assigned to positive effects by the Gamma distribution is 1.
+            f = (PctBeneficial) * Math.pow(bBeneficial, aBeneficial)
+                                * Math.pow(mDiff, aBeneficial - 1) 
+                                * Math.exp(-bBeneficial * mDiff) 
+                                / Gamma(aBeneficial); // Basener's implementation
+        if (mDiff < 0) 
+            // Simple scaling by 1 - PctBeneficial tacitly assumes that the mass
+            // assigned to negative mutation effects by the reflected Gamma 
+            // distribution is 1.
+            f = (1 - PctBeneficial) * Math.pow(bDeleterious, aDeleterious)
+                                    * Math.pow(Math.abs(mDiff), aDeleterious - 1)
+                                    * Math.exp(-bDeleterious * Math.abs(mDiff))
+                                    / Gamma(aDeleterious);
+        f = f * mDelta; // multiply probability density by length of subinterval
     }
     if (mt == "None" || mt == "NoneExact") {
         f = 0;
@@ -76,10 +109,10 @@ function runSimulation() {
     
     //# The parameters that Basener set via HTML are now global.
     
-    console.log('Working...');
+    console.log('Initializing.');
     
-    //# Removed code for setting the parameters via HTML.
-    //# var maxPopulationSize = 10 ^ 9; unused
+    // Removed code for setting the parameters via HTML.
+    // var maxPopulationSize = 10 ^ 9; unused
     var mean = 0.044;
     var stdev = 0.005;
     var fitnessRange = [-0.1, 0.15];
@@ -89,11 +122,11 @@ function runSimulation() {
     var varianceFitness = new Array(numYears);
     var P = new Array(numIncrements);
     
-    //# The following are unused.
-    //# var MeanROC = new Array(numYears);
-    //# var MVRatio = new Array(numYears);
-    //# var MVDiff = new Array(numYears);
-    //# var yearVariable = new Array(numYears);
+    // The following are unused.
+    // var MeanROC = new Array(numYears);
+    // var MVRatio = new Array(numYears);
+    // var MVDiff = new Array(numYears);
+    // var yearVariable = new Array(numYears);
     
     var minFitness = mean - numStDev * stdev;
     var maxFitness = mean + numStDev * stdev;
@@ -111,7 +144,7 @@ function runSimulation() {
     }
     
     GaussianMultiplicativeTerm = 1 / (stdev * Math.sqrt(2 * Math.PI));
-    //# Correct error: last iteration assigns to memory out of bounds
+    // Correct error: last iteration assigns to memory out of bounds
     for (i = 0; i < numIncrements /* + 1 */; i++) { 
         P[i] = GaussianMultiplicativeTerm * Math.exp(-0.5 * Math.pow((m[i] - mean) / stdev, 2));
         if (m[i] < minFitness) {
@@ -141,7 +174,7 @@ function runSimulation() {
         maxPinitial = Math.max(maxPinitial, PsolutionForPlot[0][i]);
     }
     
-    var MP = new Array(numIncrements);
+    var MP = new Array(numIncrements);    
     for (i = 0; i < numIncrements; i++) {
         MP[i] = new Array(numIncrements);
         for (j = 0; j < numIncrements; j++) {
@@ -154,7 +187,9 @@ function runSimulation() {
     for (var i = 0; i < numIncrements; i++) {
         varianceFitness[0] = varianceFitness[0] + (m[i] - mean) * (m[i] - mean) * Psolution[0][i];
     }
-    
+
+    console.log('Iterating.');
+
     for (t = 1; t < numYears; t++) {
         s = 0;
         meanFitness[t] = 0;
@@ -186,35 +221,39 @@ function runSimulation() {
     }
     
     // Added to calculate the probabilities of mutation effects
-
-    var probs = new Array(2 * numIncrements - 1);
-    var n = numIncrements - 1;
+    var mutation_probs = new Array(2 * b.length - 1);
+    var zero_index = b.length - 1;
+    
     for (var i = 0; i < b.length; i++) {
-        probs[n-i] = mutationProb(-b[i], mDelta, mt);
-        probs[n+i] = mutationProb(b[i], mDelta, mt);
+        mutation_probs[zero_index - i] = mutationProb(-b[i], mDelta, mt);
+        mutation_probs[zero_index + i] = mutationProb(b[i], mDelta, mt);
     }
     
     // Added to write results to disk
-    const results = {'PctBeneficial' : PctBeneficial, // percent_beneficial
-                     'mt' : mt,                       // mutation_type
-                     'PopSize' : PopSize,             //population_size
-                     'numYears' : numYears,
-                     'numIncrements' : numIncrements, // n_rates
-                     'b' : b,                         //birth_rates
-                     'Psolution' : Psolution,         // trajectory
-                     'm' : m,                         // growth_rates
-                     'meanFitness': meanFitness,      // means
+    const results = {'PctBeneficial' : PctBeneficial,     // percent_beneficial
+                     'mt' : mt,                           // mutation_type
+                     'PopSize' : PopSize,                 // population_size
+                     'numYears' : numYears,               // n_years + 1
+                     'numIncrements' : numIncrements,     // n_types
+                     'b' : b,                             // birth_factors
+                     'P' : P,                             // unnormalized init
+                     'Psolution' : Psolution,             // trajectory
+                     'm' : m,                             // growth_factors
+                     'meanFitness': meanFitness,          // means
                      'varianceFitness' : varianceFitness, // variances
-                     'mutation_probs' : probs,        // added by TME
-                     'mDelta' : mDelta};              // bin_width
+                     'mutation_probs' : mutation_probs,   // added
+                     'MP' : MP,                           // birthing matrix
+                     'mDelta' : mDelta};                  // delta
+    
+    console.log("Writing output to " + output_path);
     const fs = require('fs');
     const output = JSON.stringify(results);
     fs.writeFile(output_path, output, 'utf8', function (error) {
         if (error) {
             return console.log(error);
         }
-        console.log("... output is in " + output_path);
     });
+    console.log("Done.")
 }
 
 runSimulation();
