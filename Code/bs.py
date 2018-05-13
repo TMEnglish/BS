@@ -567,7 +567,7 @@ class EffectsDistribution(Distribution):
     of positive effects reflected in the zero-effect axis. There are various
     methods for altering the distribution.
     """
-    def __init__(self, factors, rv, density=True, normed=False):
+    def __init__(self, factors, rv, density=False, normed=True):
         """
         Sets a symmetric distribution of probability over mutation effects.
         
@@ -695,7 +695,7 @@ class EffectsDistribution(Distribution):
         std = np.sqrt(variance)
         subtitle = '\nMean {0}, Standard Deviation {1}'.format(mean, std)
         ax.set_title(title + subtitle)
-        ax.set_xlabel('Change in Growth Rate')
+        ax.set_xlabel('Change in Nominal Growth Factor')
         ax.set_ylabel('Probability [CORRECT LABEL?]')
         return fig 
     

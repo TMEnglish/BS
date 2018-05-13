@@ -1,6 +1,6 @@
 # Basener-Sanford
 
-Notebook ready: "How BS Got Their Results," in folder "1 Replicate Experiments."
+Notebook ready: "How BS Got Their Results," in folder "1 Replicate Experiments." [5/13]
 
 To clone the repository:
 
