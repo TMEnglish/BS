@@ -131,8 +131,8 @@ class Evolution(object):
 
 
 class BS_Evolution(Evolution):
-    def __init__(self, bs):
-        self.p = BS_Population(bs)
+    def __init__(self, bs, label=''):
+        self.p = BS_Population(bs, label)
         self.trajectory = bs['Psolution']        
 
 
@@ -207,7 +207,7 @@ class XPopulation(object):
         
 class Population(object):
     def __init__(self, initial_freqs, mutations, updates_per_year=1,
-                       norm=np.max, lossy=True, label=''):
+                       norm=None, lossy=False, label=''):
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
         self.annual_factors = initial_freqs.factors
@@ -287,7 +287,7 @@ class Population(object):
 
     
 class BS_Population(Population):
-    def __init__(self, bs):
+    def __init__(self, bs, label=''):
         self.freqs = np.array(bs['Psolution'][-1])
         self.births = np.empty_like(self.freqs)
         self.annual_factors = Factors(bs['numIncrements'])
@@ -296,7 +296,7 @@ class BS_Population(Population):
         self.birthing = bs['MP']
         self.norm = np.max
         self.lossy = True
-        self.label = ''
+        self.label = label
         self.zero = 0
 
 
@@ -614,15 +614,36 @@ class EffectsDistribution(Distribution):
     def birth_factors(self):
         return self.factors.birth
     
+    """
     def convolution_matrix(self, lossy=True):
         n = (len(self.p) + 1) // 2
-        def row(i):
-            r = np.array(self.p[i:i+n])
-            if not lossy:
-                r[0] += fsum(self.p[:i])
-                r[-1] += fsum(self.p[i+n:][::-1])
-            return r[::-1]
-        return [row(i) for i in range(n)]
+        c = np.zeros((n + 2*(n-1), n))
+        k = 0
+        for i in range(1, n):
+            c[k, :i] = self.p[:i][::-1]
+            k += 1
+        for i in range(n):
+            c[k] = self.p[i:i+n][::-1]
+            k += 1
+        for i in range(n-1, 0, -1):
+            c[k, -i:] = self.p[-i:][::-1]
+            k += 1
+        if lossy:
+            c = c[n-1 : -(n-1)]
+        return c
+    """
+    
+    def convolution_matrix(self, lossy=True):
+        n = (len(self.p) + 1) // 2
+        c = np.empty((n, n))
+        for i in range(n):
+            c[i] = self.p[i:i+n][::-1]
+        if not lossy:
+            for i in range(1, n):
+                c[0, :i] += self.p[:i][::-1]
+            for i in range(n-1, 0, -1):
+                c[-1, -i:] += self.p[-i:][::-1]
+        return c
     
     def gimmick(self):
         """
@@ -808,7 +829,7 @@ class Comparison(object):
         ax[0].set_yscale('log')
         ax[0].set_ylabel('Frequency')
         ax[1].set_ylabel('Proportion')
-        ax[1].legend(loc='best')
+        ax[1].legend(loc='upper left')
         y_max = np.max(procs)
         y_lim = ax[0].get_ylim()
         if y_lim[1] < y_max:
