@@ -2,12 +2,17 @@ import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
+import scipy.linalg as la
+import math
 import json
 import gzip
 import pickle
 import warnings
 from matplotlib import animation, rc
-from math import fsum
+from mpmath import *
+
+# 50 digits of precision
+mp.dps = 50
 
 
 # Generate JS/HTML animations.
@@ -78,7 +83,7 @@ class Evolution(object):
     """
     def __init__(self, population, n_years=0):
         """
-        Record the trajectory of `population` over `n_years` of evolution.
+        Records the trajectory of `population` over `n_years` of evolution.
         """
         self.p = population
         self.trajectory = np.array([self.p[:]])
@@ -87,7 +92,7 @@ class Evolution(object):
    
     def __call__(self, n_years=1):
         """
-        Extend the evolutionary trajectory by the given number of years.
+        Extends the evolutionary trajectory by the given number of years.
         """
         n = len(self.trajectory)
         new_trajectory = np.empty((n_years + n, len(self.p)))
@@ -111,7 +116,7 @@ class Evolution(object):
     
     def __str__(self):
         """
-        Return the string that labels the population/process.
+        Returns the string that labels the population/process.
         """
         return self.p.label
     
@@ -120,14 +125,14 @@ class Evolution(object):
         Returns the trajectory with each point normalized.
         """
         t = self.trajectory
-        # TO DO: Can this be expressed as an outer product?
         return (t.T / np.sum(t, axis=1).T).T
     
     def mean_and_variance(self, effective=False):
         """
         Returns mean and variance of fitnesses at each point in the trajectory.
         """
-        return mean_and_variance(self.growth_factors(effective), self.normalized())
+        return mean_and_variance(self.p.growth_factors(effective),
+                                 self.normalized())
 
 
 class BS_Evolution(Evolution):
@@ -135,79 +140,11 @@ class BS_Evolution(Evolution):
         self.p = BS_Population(bs, label)
         self.trajectory = bs['Psolution']        
 
-
-class XWrappedBS(Evolution):
-    """
-    `Evolution` instance constructed from the results of running Basener's code.
-    """
-    def __init__(self, bs_dict, label=''):
-        """
-        Construct `Evolution` instance according to dictionary `bs_dict`.
-        
-        The vector of annual growth factors (fitnesses) is stored under the key
-        'm'. The sequence of frequency distributions over the annual growth
-        factors is stored under the key 'Psolution'.
-        """
-        self.trajectory = bs_dict['Psolution']
-        self.annual_growth_factors = bs_dict['m']
-        self.annual_birth_factors = bs_dict['b']
-        self.annual_death_factor = 0.1
-        self.birth_gain = fsum(bs_dict['mutation_probs'])
-        self.label = label
-       
-    def __call__(self, n=None):
-        raise Exception('WrappedBS instances cannot be extended.')
-    
-
-class XPopulation(object):
-    """
-    TO DO: doc
-    """    
-    def __init__(self, initial_distribution, births_redistribution,
-                       label='', n_updates_per_year=1):
-        """
-        TO DO: doc
-        
-        The initial distribution is normalized.
-        """
-        assert initial_distribution.delta == births_redistribution.delta
-        self.initializer = initial_distribution
-        self.redistribution = births_redistribution
-        self.birth_gain = births_redistribution.norm()
-        self.label = label
-        self.n_updates_per_year = n_updates_per_year
-        self.freqs = initial_distribution[:] / initial_distribution.norm()
-        self.annual_birth_factors = births_redistribution.birth_factors()
-        self.annual_growth_factors = births_redistribution.growth_factors()
-        self.annual_death_factor = births_redistribution.factors.death
-        self.birth_factors = self.annual_birth_factors / n_updates_per_year
-        self.exp_birth_factors = np.exp(self.birth_factors) - 1
-        self.death_factor = self.annual_death_factor / n_updates_per_year
-        self.exp_death_factor = np.exp(-self.death_factor)
-        self.year = 0
-
-    def annual_update(self):
-        """
-        Do one year's worth of updates to the frequencies.
-        
-        Births distributed outside the range of fitnesses are lumped with births
-        at the endpoints of the interval.
-        
-        If offspring are always identical to their parents in fitness (either
-        because there are no mutations or because mutations have no effect on
-        fitness), and a particular fitness is initially of frequency f0, then
-        the frequency of that is f0 * exp(n * growth_factors) after n years
-        """
-        for _ in range(self.n_updates_per_year):
-            self.freqs *= self.exp_death_factor
-            births = self.freqs * self.exp_birth_factors
-            self.freqs += self.redistribution(births)
-        self.year += 1
-
         
 class Population(object):
     def __init__(self, initial_freqs, mutations, updates_per_year=1,
                        norm=None, lossy=False, label=''):
+        self.initial_freqs = initial_freqs
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
         self.annual_factors = initial_freqs.factors
@@ -215,28 +152,56 @@ class Population(object):
         self.updates_per_year = updates_per_year
         n = len(initial_freqs)
         birth_factors = self.annual_factors.birth / updates_per_year
-        self.birthing = np.repeat([birth_factors], n, axis=0)
-        self.birthing *= mutations.convolution_matrix(lossy)
+        self.birthing = mutations.matrix(lossy) * birth_factors
+        m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
+                 for col in self.birthing.T]
+        self.effective_growth = np.multiply(m, self.updates_per_year)
+        self.effective_birth = self.effective_growth - self.effective_growth[0]
         self.norm = norm
         self.lossy = lossy
         self.label = label
         self.zero = self.freqs[0] * 0
+        
+    def solve(self):
+        W = self.birthing - self.death_factor * np.eye(len(self))
+        self.values, self.vectors = np.eig(W)
+        self.c = la.solve(self.e_vectors, self.initial_freqs)
+        
+    def solution(self, t, normed=False):
+        P_t = np.dot(self.e_vectors, self.c * np.exp(t * self.e_values)).real
+        if normed:
+            P_t /= float(mp.fsum(P_t))
+        return P_t
     
+    def update(self):
+        np.dot(self.birthing, self.freqs, out=self.births)
+        self.freqs *= 1 - self.death_factor
+        self.freqs += self.births
+        
     def annual_update(self):
         for _ in range(self.updates_per_year):
-            np.dot(self.birthing, self.freqs, out=self.births)
-            self.freqs *= 1 - self.death_factor
-            self.freqs += self.births
+            self.update()
         if not self.norm is None:
             relatively_small = self.freqs <= 1e-9 * self.norm(self.freqs)
             self.freqs[relatively_small] = self.zero  
         return self.freqs
+    
+    def birth_factors(self, effective=False):
+        """        
+        Returns growth factors minus the smallest of the growth factors.
+        
+        This assumes that the effective death factor does not depend on the
+        type of organism. The fit to Equation 3.4 of the article is good, but
+        conceivably would be improved by calculation of different death factors
+        for the the different types.
+        """
+        if effective:
+            return self.effective_birth
+        return self.annual_factors.birth
 
     def growth_factors(self, effective=False):
         if effective:
-            g = np.array([fsum(col) for col in self.birthing.T])
-            g += 1 - self.death_factor
-            return np.log(g) * self.updates_per_year
+            return self.effective_growth
         return self.annual_factors.growth
 
     def get_frequencies(self, normed=False):
@@ -259,7 +224,17 @@ class Population(object):
         the current frequences sum to F, then the size of the population has
         have changed by a factor of F since year 0.
         """
-        return fsum(self.freqs)
+        return mp.fsum(self.freqs)
+    
+    def mean(self, effective=False):
+        return mp.fsum(self.get_frequencies(normed=True)
+                       * self.growth_factors(effective))
+    
+    def mean_and_variance(self, effective=False):
+        mean = self.mean(effective)
+        var = mp.fsum(self.growth_factors(effective)
+                      * self.get_frequencies(normed=True) ** 2)
+        return mean, var - mean ** 2
     
     def set_label(self, label):
         """
@@ -384,6 +359,9 @@ class Distribution(object):
         self.p = np.zeros_like(self.domain)
         self.p[self.zero_index] = 1
         
+    def to_mpf(self):
+        self.p = np.array([mp.mpf(x) for x in self.p])
+        
     def masses(self, distribution, domain, approximate=False):
         """
         Returns probabilites distributed over intervals with equispaced centers.
@@ -416,11 +394,14 @@ class Distribution(object):
         self.p[x < 0] = self.p[x > 0][::-1]
         self.p[x == 0] = gamma.cdf(self.delta / 2)
     
-    def norm(self):
+    def norm(self, to_float=True):
         """
         Returns an accurate sum of the probabilities in the distribution.
         """
-        return fsum(np.sort(self.p))
+        x = mp.fsum(np.sort(self.p))
+        if to_float:
+            return float(x)
+        return x
     
     def normalize(self):
         """
@@ -450,7 +431,7 @@ class Distribution(object):
         i = np.argsort(np.abs(product))
         # pos = fsum(np.sort(product[product > 0]))
         # neg = fsum(np.sort(product[product < 0])[::-1])
-        return fsum(product[i])
+        return mp.fsum(product[i])
     
     def mean_and_variance(self):
         """
@@ -515,12 +496,14 @@ class Frequencies(Distribution):
     def __init__(self, factors):
         self.factors = factors
         super().__init__(factors.growth, factors.delta)
-    
+
+"""
     def growth_factors(self):
         return self.factors.growth
     
     def birth_factors(self):
         return self.factors.birth
+"""
         
 
 class GaussianFrequencies(Frequencies):
@@ -567,15 +550,16 @@ class EffectsDistribution(Distribution):
     of positive effects reflected in the zero-effect axis. There are various
     methods for altering the distribution.
     """
-    def __init__(self, factors, rv, density=False, normed=True):
+    def __init__(self, factors, rv=None, density=False, normed=True):
         """
         Sets a symmetric distribution of probability over mutation effects.
         
         Parameter `factors` is an instance of class `Factors`. Parameter `rv`
-        is a scipy.stats "frozen rv," e.g., stats.norm(0, 0.002) for the
-        Gaussian case of the article. The Boolean `density` determines whether
-        probability densities are used instead of probability masses in
-        construction of the distribution. The Boolean `normed` determines
+        is either `None`, in which case probability mass of 1 is assigned to
+        effect 0, or a scipy.stats "frozen rv," e.g., stats.norm(0, 0.002) for
+        the Gaussian case of the article. The Boolean `density` determines
+        whether probability densities are used instead of probability masses
+        in construction of the distribution. The Boolean `normed` determines
         whether or not the constructed distribution is normalized. 
         
         In any case, a symmetric distribution is constructed by reflecting
@@ -595,7 +579,10 @@ class EffectsDistribution(Distribution):
         self.factors = factors
         self.rv = rv
         super().__init__(factors.effects, factors.delta)
-        x = self.domain
+        self.effect = self.domain
+        if rv is None:
+            return
+        x = self.effect
         if density:
             self.p[x > 0] = rv.pdf(x[x > 0]) * self.delta
         else:
@@ -613,29 +600,10 @@ class EffectsDistribution(Distribution):
     
     def birth_factors(self):
         return self.factors.birth
-    
-    """
-    def convolution_matrix(self, lossy=True):
+        
+    def matrix(self, lossy=False):
         n = (len(self.p) + 1) // 2
-        c = np.zeros((n + 2*(n-1), n))
-        k = 0
-        for i in range(1, n):
-            c[k, :i] = self.p[:i][::-1]
-            k += 1
-        for i in range(n):
-            c[k] = self.p[i:i+n][::-1]
-            k += 1
-        for i in range(n-1, 0, -1):
-            c[k, -i:] = self.p[-i:][::-1]
-            k += 1
-        if lossy:
-            c = c[n-1 : -(n-1)]
-        return c
-    """
-    
-    def convolution_matrix(self, lossy=True):
-        n = (len(self.p) + 1) // 2
-        c = np.empty((n, n))
+        c = np.empty((n, n), dtype=type(self.p[0]))
         for i in range(n):
             c[i] = self.p[i:i+n][::-1]
         if not lossy:
@@ -647,7 +615,7 @@ class EffectsDistribution(Distribution):
     
     def gimmick(self):
         """
-        Assign the probability of minimally delerious effect to zero effect.
+        Assigns the probability of minimally delerious effect to zero effect.
         """
         zero = len(self) // 2
         self.p[zero] = self.p[zero - 1]
@@ -661,8 +629,8 @@ class EffectsDistribution(Distribution):
         are scaled so that they sum to 1 - `percent_beneficial`.
         """
         x = self.domain
-        self.p[x > 0] *= percent_beneficial / fsum(self.p[x > 0][::-1])
-        self.p[x <= 0] *= (1 - percent_beneficial) / fsum(self.p[x <= 0])
+        self.p[x > 0] *= percent_beneficial / float(mp.fsum(self.p[x > 0][::-1]))
+        self.p[x <= 0] *= (1 - percent_beneficial) / float(mp.fsum(self.p[x <= 0]))
         self.normalize()
     
     def iid_effects(self, number_of_mutations=1, log_number_of_loci=0,
@@ -921,6 +889,15 @@ def mean_and_variance(x, p):
     variance = np.sum(np.multiply(p, np.square(x)), axis=axis)
     variance -= np.square(mean)
     return mean, variance
+
+
+def accurate_dot(a, b):
+    """
+    Slow dot product taking fsum of sorted terms.
+    """
+    product = np.multiply(a, b)
+    i = np.argsort(np.abs(product))
+    return mp.fsum(product[i])
 
 
 def relative_error(actual, desired, absolute=False):

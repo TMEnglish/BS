@@ -15,13 +15,18 @@ class Gamma(EffectsDistribution):
         """
         rv = stats.gamma(alpha, scale=1/beta)
         super().__init__(factors, rv, density=density, normed=normed)
+    
+    def zero_neutral(self):
+        """
+        Sets to zero the probability that mutation has no effect on fitness.
+        """
+        self.p[self.effect == 0] = 0
         
     def gimmick(self):
         """
         Assigns the probability of minimally deleterious effect to zero effect.
         """
-        effect = self.domain
-        self.p[effect == 0] = self.p[effect < 0][-1]
+        self.p[self.effect == 0] = self.p[self.effect < 0][-1]
 
     def reweight(self, beneficial=0.001, botched=False):
         """
@@ -36,9 +41,9 @@ class Gamma(EffectsDistribution):
         positive effects are simply multiplied by `beneficial` and 1 -
         `beneficial`, respectively.
         """
-        effect = self.domain
+        effect = self.effect
         if not botched:
-            self.p[effect > 0] /= fsum(self.p[effect > 0])
-            self.p[effect <= 0] /= fsum(self.p[effect <= 0])
+            self.p[effect > 0] /= float(mp.fsum(self.p[effect > 0]))
+            self.p[effect <= 0] /= float(mp.fsum(self.p[effect <= 0]))
         self.p[effect > 0] *= beneficial
         self.p[effect <= 0] *= 1 - beneficial
