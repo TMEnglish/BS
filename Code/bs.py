@@ -9,10 +9,24 @@ import gzip
 import pickle
 import warnings
 from matplotlib import animation, rc
-from mpmath import *
+from mpmath import mp
 
-# 50 digits of precision
+
+# Set the default number of digits of precision in mpmath multiprecision
+# operations.
 mp.dps = 50
+
+# Make some mpmath functions into quasi-ufuncs taking either scalar or
+# array arguments.
+
+mp_float = np.frompyfunc(mp.mpf, 1, 1)
+erf = np.frompyfunc(mp.erf, 1, 1)
+erfc = np.frompyfunc(mp.erfc, 1, 1)
+exp = np.frompyfunc(mp.exp, 1, 1)
+gamma = np.frompyfunc(mp.gamma, 1, 1)
+rgamma = np.frompyfunc(mp.rgamma, 1, 1) # reciprocal gamma
+hyp1f1 = np.frompyfunc(mp.hyp1f1, 3, 1) # confluent hypergeometric 1_F_1
+hyperu = np.frompyfunc(mp.hyperu, 3, 1) # confluent hypergeometric 2_F_2
 
 
 # Generate JS/HTML animations.
@@ -29,6 +43,9 @@ sns.set_palette(sns.color_palette("Set2", 4))
 
 
 class Factors(object):
+    """
+    Stores Malthusian parameters exactly equal to those in Basener's code.
+    """
     def __init__(self, n_types, death=0.1, max_growth=0.15, exclude_max=False):
         self.n_types = n_types
         self.death = death
@@ -79,28 +96,37 @@ class Evolution(object):
     Record the evolution of a Population instance.
     
     The n-th element of the evolutionary trajectory gives the frequencies of
-    fitnesses (alternatively, growth factors) in the population after n years.
+    fitnesses (alternatively, growth factors) in the population after n epochs.
     """
-    def __init__(self, population, n_years=0):
+    def __init__(self, population, n_epochs=0, years_per_epoch=1, x_stride=1):
         """
-        Records the trajectory of `population` over `n_years` of evolution.
+        Records the trajectory of `population` over `n_epochs` of evolution.
         """
         self.p = population
-        self.trajectory = np.array([self.p[:]])
-        if n_years > 0:
-            self(n_years)
+        self.trajectory = np.array([self.p[::x_stride]])
+        self.sums = np.array([np.sum(self.p[:])])
+        self.years_per_epoch = years_per_epoch
+        self.xstride = x_stride
+        self(n_epochs)
    
-    def __call__(self, n_years=1):
+    def __call__(self, n_epochs=1):
         """
-        Extends the evolutionary trajectory by the given number of years.
+        Extends the evolutionary trajectory by the given number of epochs.
         """
+        if n_epochs < 1:
+            return
         n = len(self.trajectory)
-        new_trajectory = np.empty((n_years + n, len(self.p)))
+        new_trajectory = np.empty((n_epochs + n, len(self.p[::self.xstride])))
         new_trajectory[:n] = self.trajectory
         self.trajectory = new_trajectory
-        for i in range(n, n + n_years):
-            self.p.annual_update()
-            self.trajectory[i] = self.p[:]
+        new_sums = np.empty(n_epochs + n)
+        new_sums[:n] = self.sums
+        self.sums = new_sums
+        for i in range(n, n + n_epochs):
+            for _ in range(self.years_per_epoch):
+                self.p.annual_update()
+            self.trajectory[i] = self.p[::self.xstride]
+            self.sums[i] = np.sum(self.p[:])
 
     def __getitem__(self, index_or_slice):
         """
@@ -120,30 +146,65 @@ class Evolution(object):
         """
         return self.p.label
     
-    def normalized(self):
+    def n_years(self):
+        """
+        Returns the number of years in the evolutionary process.
+        """
+        return self.per_epoch * (len(self.trajectory) - 1)
+    
+    def last_valid_epoch(self):
+        """
+        Returns the last epoch in which population size is a valid number.
+        """
+        sums = self.sums
+        i = np.argmax(np.isnan(sums))
+        j = np.argmax(np.isinf(sums))
+        k = np.argmax(sums == 0)
+        where = np.array([i, j, k])
+        if np.max(where) > 0:
+            where = where[np.nonzero(where)]
+            first_invalid_epoch = np.min(where) - 1
+            return first_invalid_epoch - 1
+        return len(self) - 1
+    
+    def normalized(self, begin=None, end=None, stride=None):
         """
         Returns the trajectory with each point normalized.
         """
-        t = self.trajectory
-        return (t.T / np.sum(t, axis=1).T).T
+        # t = self.trajectory[begin:end:stride]
+        # return (t.T / np.sum(t, axis=1).T).T
+        return (self.trajectory[begin:end:stride].T / self.sums[begin:end:stride]).T
+    
+    def growth_factors(self, effective=False):
+        return self.p.growth_factors(effective)[::self.xstride]
+    
+    def birth_factors(self, effective=False):
+        return self.p.birth_factors(effective)[::self.xstride]
     
     def mean_and_variance(self, effective=False):
         """
         Returns mean and variance of fitnesses at each point in the trajectory.
         """
-        return mean_and_variance(self.p.growth_factors(effective),
+        return mean_and_variance(self.growth_factors(effective),
                                  self.normalized())
 
 
 class BS_Evolution(Evolution):
+    """
+    Output of Basener's code, wrapped in an `Evolution` instance.
+    """
     def __init__(self, bs, label=''):
+        """
+        Converts `bs` output of Basener's code to `Evolution` instance.
+        """
         self.p = BS_Population(bs, label)
         self.trajectory = bs['Psolution']        
 
         
 class Population(object):
     def __init__(self, initial_freqs, mutations, updates_per_year=1,
-                       norm=None, lossy=False, label=''):
+                       norm=None, threshold=1e-9, lossy=False, label='',
+                       matrix=False):
         self.initial_freqs = initial_freqs
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
@@ -151,13 +212,21 @@ class Population(object):
         self.death_factor = self.annual_factors.death / updates_per_year
         self.updates_per_year = updates_per_year
         n = len(initial_freqs)
-        birth_factors = self.annual_factors.birth / updates_per_year
-        self.birthing = mutations.matrix(lossy) * birth_factors
-        m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
-                 for col in self.birthing.T]
-        self.effective_growth = np.multiply(m, self.updates_per_year)
-        self.effective_birth = self.effective_growth - self.effective_growth[0]
+        self.birth_factors = self.annual_factors.birth / updates_per_year
+        self.mutations = mutations
+        if matrix:
+            self.birthing = mutations.matrix(lossy) * self.birth_factors
+            m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
+                     for col in self.birthing.T]
+            self.effective_growth = np.multiply(m, self.updates_per_year)
+            self.effective_birth = self.effective_growth - self.effective_growth[0]
+        else:
+            """HACK HACK HACK"""
+            self.effective_growth = self.annual_factors.growth
+            self.effective_birth = self.annual_factors.birth
+            """HACK HACK HACK"""
         self.norm = norm
+        self.threshold = threshold
         self.lossy = lossy
         self.label = label
         self.zero = self.freqs[0] * 0
@@ -174,7 +243,11 @@ class Population(object):
         return P_t
     
     def update(self):
-        np.dot(self.birthing, self.freqs, out=self.births)
+        try:
+            np.dot(self.birthing, self.freqs, out=self.births)
+        except:
+            np.multiply(self.freqs, self.birth_factors, out=self.births)
+            self.births = self.mutations(self.births, self.lossy)
         self.freqs *= 1 - self.death_factor
         self.freqs += self.births
         
@@ -182,7 +255,7 @@ class Population(object):
         for _ in range(self.updates_per_year):
             self.update()
         if not self.norm is None:
-            relatively_small = self.freqs <= 1e-9 * self.norm(self.freqs)
+            relatively_small = self.freqs <= self.threshold * self.norm(self.freqs)
             self.freqs[relatively_small] = self.zero  
         return self.freqs
     
@@ -210,10 +283,9 @@ class Population(object):
         
         If `normalize` is true, proportions are returned instead of frequencies.
         """
-        result = np.array(self.freqs)
         if normed:
-            result /= self.size()
-        return result
+            return self.freqs / self.size()
+        return self.freqs
     
     def size(self):
         """
@@ -222,19 +294,22 @@ class Population(object):
         The size of the population is the sum of the frequencies of the discrete
         fitnesses. The size of the initial population is equated with 1. Thus if
         the current frequences sum to F, then the size of the population has
-        have changed by a factor of F since year 0.
+        changed by a factor of F since year 0.
         """
-        return mp.fsum(self.freqs)
+        return accurate_sum(self.freqs)
     
     def mean(self, effective=False):
-        return mp.fsum(self.get_frequencies(normed=True)
-                       * self.growth_factors(effective))
+        """
+        TO DO: TEST
+        """
+        return moment(self.freqs, self.growth_factors(effective), 1)
+        # return mp.dot(self.freqs, self.growth_factors(effective)) / self.size()
     
     def mean_and_variance(self, effective=False):
-        mean = self.mean(effective)
-        var = mp.fsum(self.growth_factors(effective)
-                      * self.get_frequencies(normed=True) ** 2)
-        return mean, var - mean ** 2
+        factors = self.growth_factors(effective)
+        mean = moment(self.freqs, factors, 1)
+        var = moment(self.freqs, factors, 2) - mean ** 2
+        return mean, var
     
     def set_label(self, label):
         """
@@ -343,6 +418,8 @@ class Distribution(object):
     def __init__(self, domain, delta, label=None):
         """
         Initialize with all probability mass on the point closest to zero.
+        
+        The type of probabilities is the type of `domain` elements.
         """
         self.domain = domain
         self.delta = delta
@@ -356,11 +433,14 @@ class Distribution(object):
             self.zero_index = np.argmin(np.abs(self.domain))
             if self.domain[self.zero_index] != 0:
                 warnings.warn('Zero is not in the domain')
-        self.p = np.zeros_like(self.domain)
+        self.p = np.zeros_like(self.domain)  # p has base type of domain
         self.p[self.zero_index] = 1
         
-    def to_mpf(self):
-        self.p = np.array([mp.mpf(x) for x in self.p])
+    def convert(self, new_basetype):
+        """
+        Convert type of internally stored probabilities.
+        """
+        self.p = convert(self.p, new_basetype)
         
     def masses(self, distribution, domain, approximate=False):
         """
@@ -378,7 +458,8 @@ class Distribution(object):
                         distribution.cdf(upper) - distribution.cdf(lower))
         
     def gaussian(self, mean, std, approximate=False):
-        self.p[:] = self.masses(stats.norm(mean, std), self.domain, approximate)
+        self.rv = stats.norm(mean, std)
+        self.p[:] = self.masses(self.rv, self.domain, approximate)
         if self.zero_centered and mean == 0:
             self.p[:] = (self.p + self.p[::-1]) / 2
     
@@ -388,26 +469,39 @@ class Distribution(object):
         """
         if not self.zero_centered:
             raise Exception('Zero is not at the center of the domain')
-        gamma = stats.gamma(alpha, scale=1/beta)
+        self.rv = stats.gamma(alpha, scale=1/beta)
         x = self.domain
-        self.p[x > 0] = self.masses(gamma, x[x > 0], approximate) / 2
+        self.p[x > 0] = self.masses(self.rv, x[x > 0], approximate) / 2
         self.p[x < 0] = self.p[x > 0][::-1]
-        self.p[x == 0] = gamma.cdf(self.delta / 2)
+        self.p[x == 0] = self.rv.cdf(self.delta / 2)
     
-    def norm(self, to_float=True):
+    def threshold(self, theta, normed=True):
         """
-        Returns an accurate sum of the probabilities in the distribution.
+        Sets all probabilities less than `theta` to 0.
+        
+        The resulting distribution is normalized by default.
         """
-        x = mp.fsum(np.sort(self.p))
-        if to_float:
-            return float(x)
-        return x
+        self.p[self.p < theta] = 0
+        if normed:
+            self.normalize()
+    
+    def support(self):
+        """
+        Returns array of domain elements with probability greater than zero.
+        """
+        return self.domain[self.p > 0]
+    
+    def norm(self):
+        """
+        Returns the sum of the probabilities as a multiprecision float.
+        """
+        return mp.fsum(np.sort(self.p))
     
     def normalize(self):
         """
         Divides all probabilities by their (accurate) sum.
         """
-        self.p /= self.norm()
+        self.p[:] = self.p / self.norm()
     
     def set_label(self, label):
         """
@@ -425,17 +519,25 @@ class Distribution(object):
     
     def moment(self, n):
         """
-        Returns the n-th raw moment of the distribution.
+        Returns the n-th raw moment of the distribution as multiprecision float.
         """
-        product = self.p * self.domain ** n
-        i = np.argsort(np.abs(product))
-        # pos = fsum(np.sort(product[product > 0]))
-        # neg = fsum(np.sort(product[product < 0])[::-1])
-        return mp.fsum(product[i])
+        return moment(self.p, self.domain, n)
+    
+    def mean(self):
+        """
+        Returns the mean value of the distribution as multiprecision float.
+        """
+        return self.moment(1)
+    
+    def variance(self):
+        """
+        Returns the variance of the distribution as multiprecision float.
+        """
+        return self.moment(2) - self.moment(1) ** 2
     
     def mean_and_variance(self):
         """
-        Returns (mean, variance) of the distribution.
+        Returns (mean, variance) of the distribution as multiprecision floats.
         """
         mean = self.moment(1)
         variance = self.moment(2) - mean ** 2
@@ -443,7 +545,7 @@ class Distribution(object):
             
     def vlines(self, axes, x_offset=0, label=None, color='k', lw=3):
         """
-        Plot the distribution on the axes as vlines, return the vlines object.
+        Returns vlines object plotted on the given `axes`.
         
         When plotting vertical lines for two distributions on the same axes,
         shift one plot slightly to the left with a negative `x_offset`, and the
@@ -451,7 +553,7 @@ class Distribution(object):
         """
         if label is None:
             label = self.get_label()
-        axes.set_xlabel('Change in Nominal Growth Factor')
+        axes.set_xlabel('Change in Nominal Fitness')
         axes.set_ylabel('Probability')
         v = axes.vlines(self.domain + x_offset, 0, self.p, label=label)
         v.set(color=color, linewidth=lw, alpha=1)
@@ -494,16 +596,12 @@ class Frequencies(Distribution):
     growth factor closest to 0.
     """
     def __init__(self, factors):
+        """
+        Initializes with all probability mass on growth factor closest to zero.
+        """
         self.factors = factors
         super().__init__(factors.growth, factors.delta)
 
-"""
-    def growth_factors(self):
-        return self.factors.growth
-    
-    def birth_factors(self):
-        return self.factors.birth
-"""
         
 
 class GaussianFrequencies(Frequencies):
@@ -512,27 +610,32 @@ class GaussianFrequencies(Frequencies):
     """
     def __init__(self, factors, mean=0.044, std=0.005, crop=11.2, density=True):
         """
-        Set distribution to discretized Normal(mean, std) over growth factors.
+        Sets distribution to discretized Normal(mean, std) over growth factors.
         
-        The `factors` parameter is an instance of the `Factors` class. With the
-        default settings of the other parameters, the result is close to the
-        initial frequency distribution generated by Basener's code. Here the
-        sum used in normalizing the distribution is accurate. In Basener's code,
-        the sum is inaccurate.
+        Given in `factors.growth` are equispaced centers of subintervals of
+        length `factors.delta`. Growth factors differing from the given `mean`
+        by more than `crop` standard deviations are assigned zero mass. The
+        Boolean parameter `density` determines whether we follow Basener's
+        script in setting the probability masses of subintervals proportional
+        to the probability density at their centers.
         
-        Growth factors differing from the given `mean` by more than `crop`
-        standard deviations are assign zero frequency. Set `density=False` to
-        assign probability masses instead of probability densities to the
-        growth factors, prior to normalization.
+        The distribution of probability mass is normalized.
         """
         super().__init__(factors)
         self.given_mean = mean
         self.given_std = std
         z = (self.domain - mean) / std
         if density:
-            np.exp(-0.5 * z ** 2, out=self.p)
+            self.p[:] = np.exp(-0.5 * z ** 2)
         else:
-            self.gaussian(mean, std)
+            # Difference the cumulative distribution function at the endpoints
+            # of subintervals centered on equispaced growth factors, using
+            # multiprecision floating point numbers in the calculations. This
+            # is equivalent to integrating the density over each subinterval.
+            delta_z = mp.mpf(factors.delta) / std
+            ends = np.concatenate(([z[0] - delta_z / 2], z + delta_z / 2))
+            cdf = 0.5 * (1 + erf(ends / mp.sqrt(2)))
+            self.p[:] = cdf[1:] - cdf[:-1]
         self.p[np.abs(z) > crop] = 0
         self.normalize()
 
@@ -628,6 +731,7 @@ class EffectsDistribution(Distribution):
         sum to `percent_beneficial`, and the probabilities of negative effects
         are scaled so that they sum to 1 - `percent_beneficial`.
         """
+        raise Exception('this is wrong')
         x = self.domain
         self.p[x > 0] *= percent_beneficial / float(mp.fsum(self.p[x > 0][::-1]))
         self.p[x <= 0] *= (1 - percent_beneficial) / float(mp.fsum(self.p[x <= 0]))
@@ -702,84 +806,117 @@ class Comparison(object):
     """
     Container of multiple evolutionary processes under comparison.
     """
-    def __init__(self, processes, subtitle='[set_subtitle]', n_years=0):
+    def __init__(self, processes, subtitle='\n[set_subtitle]',
+                       colors=None, linestyles=None):
         """
-        Store the evolutionary processes (identical to one another in length).
+        Stores the evolutionary `processes` along with plot settings.
         
-        The given processes are extended by the given number of years. The given
-        subtitle is used in plots and animations.
+        Shorter processes are run, when necessary, to make them equal in
+        length to the longest of the processes. The subtitle and graphics
+        settings are used in plots and animations.
         """
-        assert np.array([len(p) == len(processes[0]) for p in processes]).all()
         self.processes = list(processes)
-        self.subtitle = subtitle
-        if n_years > 0:
-            self(n_years)
+        self.set_subtitle(subtitle)
+        lengths = [len(p) for p in processes]
+        self.length = np.min(lengths)
+        self.run_until_year(np.max(lengths) - 1)
+        if colors is None:
+            colors = sns.color_palette()
+        self.set_colors(colors)
+        if linestyles is None:
+            linestyles = ['-']
+        self.set_linestyles(linestyles)
 
-    def __call__(self, n_years):
+    def run_until_epoch(self, epoch):
         """
-        Extend the evolutionary processes by the specified number of years.
+        Makes the processes extend logically to the given `epoch`.
+        
+        Processes are run as long as necessary (perhaps not at all) to make
+        them extend to the given epoch. Then the length of this object is set
+        unconditionally to `epoch` + 1.
         """
-        for ev in self.processes:
-            ev(n_years)
+        new_length = year + 1
+        if new_length > self.length:
+            for ev in self.processes:
+                ev(new_length - len(ev))
+        self.length = new_length
     
     def __len__(self):
         """
         Return the length of the evolutionary processes (including year 0).
         """
-        return len(self.processes[0])
+        return self.length
 
     def set_subtitle(self, subtitle):
+        assert isinstance(subtitle, str)
         self.subtitle = subtitle
+            
+    def set_linestyles(self, linestyles):
+        n = len(self.processes)
+        ls = [linestyles[i % len(linestyles)] for i in range(n)]
+        self.linestyles = np.array(ls)
+        
+    def set_colors(self, colors):
+        n = len(self.processes)
+        self.colors = np.array([colors[i % len(colors)] for i in range(n)])
+        
+    def select(self, index_list):
+        """
+        Returns new `Comparison` of processes indicated by `index_list`.
+        """
+        i = index_list
+        processes = [self.processes[j] for j in i]
+        return Comparison(processes, self.subtitle, colors=self.colors[i],
+                          linestyles=self.linestyles[i])
     
     def mean_variance_plots(self, line_styles=None):
         return mean_variance_plots(self.processes, line_styles=line_styles,
                                    subtitle=self.subtitle)
     
-    def animate(self, nframes=100, duration=10000, n_years=None,
-                      line_styles=None, effective=True):
+    def animate(self, nframes=100, duration=10000, effective=True):
         """
-        Return animation of one or more evolutionary processes.
+        Returns animation of evolutionary processes.
         
         If the number of frames, `nframes`, is 0, then a static figure is
-        returned instead of an animation.
+        returned instead of an animation. The `duration` of the animation
+        is given in milliseconds. The Boolean `effective` determines whether
+        effective growth rates (fitnesses) are displayed instead of nominal
+        fitnesses.
         """
-        if n_years is None:
-            n_years = len(self) - 1
-            length = len(self)
-        else:
-            length = n_years + 1
-        if nframes is 0:
+        length = len(self)
+        n_years = length - 1
+        if nframes < 1:
             stride = None
         else:
-            if nframes > length:
-                nframes = length
+            nframes = min(nframes, length)
+            duration = max(duration, nframes)
             stride = length // nframes
-            if duration < nframes:
-                duration = nframes
             interval = round(duration / nframes)
         labels = [str(p.p) for p in self.processes]
-        if line_styles is None:
-            line_styles = ['-' for p in self.processes]
-        g = [p.p.growth_factors(effective) for p in self.processes]
-        procs = [p[:length] for p in self.processes]
-        normed = [p.normalized()[:length] for p in self.processes]
-        p = [procs[:], normed[:]]
-        n = length
-        if not stride is None:
-            for i in range(2):
-                p[i] = [np.concatenate((y[:n:stride], [y[n-1]])) for y in p[i]]
+        
+        # Each process has its own growth factors
+        g = [p.growth_factors(effective) for p in self.processes] 
+        procs = [p[:length:stride] for p in self.processes]          # Introduce stride in views of unnormalized
+        procs_last = [p[length-1:length] for p in self.processes]          # Views of last unnormalized frames
+        normed = [p.normalized(end=length, stride=stride) for p in self.processes]
+        normed_last = [p / np.sum(p) for p in procs_last]
+        normed = [np.concatenate((a, b)) for a, b in zip(normed, normed_last)]
+        procs = [np.concatenate((a, b)) for a, b in zip(procs, procs_last)]
+        p = [normed[:], procs[:]]
         n_frames = len(p[0][0])
         lines = np.empty((2, len(p[0])), dtype=object)
         is_interactive = plt.isinteractive()
         plt.interactive(False)
         fig, ax = plt.subplots(2, sharex=True)
+        
         # Construct lines by plotting them for the final year
         for n in range(2):
             for i in range(len(g)):
-                w = p[n][i][-1] > 0
-                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w],
-                                          label=labels[i], ls=line_styles[i],
-                                          lw=4, zorder=10)
+                w = p[n][i][-1] > 0  # Boolean indices of support
+                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w], 
+                                          label=labels[i], lw=4, zorder=10,
+                                          ls=self.linestyles[i],
+                                          c=self.colors[i],)
         for n in range(2):
             for i in range(len(g)):
                 w = p[n][i][0] > 0
@@ -788,22 +925,32 @@ class Comparison(object):
                 w = p[n][i][-1] > 0
                 ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
                            lw=1, alpha=1)
+        
         title = 'Evolution for {0} Years'.format(n_years)
         fig.suptitle(title + self.subtitle)
         if effective:
-            ax[1].set_xlabel('Effective Growth Factor')
+            ax[1].set_xlabel('Effective Fitness')
         else:
-            ax[1].set_xlabel('Nominal Growth Factor')
-        ax[0].set_yscale('log')
-        ax[0].set_ylabel('Frequency')
-        ax[1].set_ylabel('Proportion')
-        ax[1].legend(loc='upper left')
-        y_max = np.max(procs)
-        y_lim = ax[0].get_ylim()
-        if y_lim[1] < y_max:
-            ax[0].set_ylim(y_lim[0], y_max)
+            ax[1].set_xlabel('Nominal Fitness')
+        ax[1].set_yscale('log')
+        ax[1].set_ylabel('Frequency')
+        ax[0].set_ylabel('Proportion')
+        ax[0].legend(loc='upper left')
         plt.interactive(is_interactive)
-
+        
+        def adjust_ylim(ax, data):
+            raveled = np.ravel(data)
+            y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
+            y_lim = ax.get_ylim()
+            if not np.isinf(y_max) and not np.isnan(y_max):
+                y_max = max(y_max, y_lim[1])
+            if not np.isinf(y_min) and not np.isnan(y_min):
+                y_min = min(y_min, y_lim[0])
+            try:
+                ax.set_ylim(y_min, y_max)
+            except:
+                pass
+            
         def initializer():
             for n in range(2):
                 for line, x, y in zip(lines[n], g, p[n]):
@@ -824,9 +971,119 @@ class Comparison(object):
         if stride is None:
             out = fig
         else:
+            adjust_ylim(ax[1], procs)
+            adjust_ylim(ax[0], normed) 
             out = animation.FuncAnimation(fig, animator, init_func=initializer,
                                           frames=n_frames, interval=interval,
                                           blit=True, repeat_delay=2000)
+            plt.close()
+        return out
+    
+    def Xanimate(self, nframes=100, duration=10000, effective=True):
+        """
+        Returns animation of evolutionary processes.
+        
+        If the number of frames, `nframes`, is 0, then a static figure is
+        returned instead of an animation. The `duration` of the animation
+        is given in milliseconds. The Boolean `effective` determines whether
+        effective growth rates (fitnesses) are displayed instead of nominal
+        fitnesses.
+        """
+        length = len(self)
+        n_years = length - 1
+        if nframes < 1:
+            stride = None
+        else:
+            nframes = min(nframes, length)
+            duration = max(duration, nframes)
+            stride = length // nframes
+            interval = round(duration / nframes)
+        labels = [str(p.p) for p in self.processes]
+        g = [p.p.growth_factors(effective) for p in self.processes]
+        procs = [p[:length] for p in self.processes]                  # Introduce stride here?
+        normed = [p.normalized(end=length) for p in self.processes]   # Need a normalization generator?
+        p = [normed[:], procs[:]]
+        n = length
+        if not stride is None:
+            for i in range(2):
+                p[i] = [np.concatenate((y[:n:stride], [y[n-1]])) for y in p[i]]  # Is contenation necessary?
+        #
+        # MOVE NORMALIZATION HERE
+        #
+        n_frames = len(p[0][0])
+        lines = np.empty((2, len(p[0])), dtype=object)
+        is_interactive = plt.isinteractive()
+        plt.interactive(False)
+        fig, ax = plt.subplots(2, sharex=True)
+        
+        # Construct lines by plotting them for the final year
+        for n in range(2):
+            for i in range(len(g)):
+                w = p[n][i][-1] > 0  # Boolean indices of support
+                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w], 
+                                          label=labels[i], lw=4, zorder=10,
+                                          ls=self.linestyles[i],
+                                          c=self.colors[i],)
+        for n in range(2):
+            for i in range(len(g)):
+                w = p[n][i][0] > 0
+                ax[n].plot(g[i][w], p[n][i][0][w], c='black', lw=1, alpha=0.5,
+                           zorder=11)
+                w = p[n][i][-1] > 0
+                ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
+                           lw=1, alpha=1)
+        
+        title = 'Evolution for {0} Years'.format(n_years)
+        fig.suptitle(title + self.subtitle)
+        if effective:
+            ax[1].set_xlabel('Effective Fitness')
+        else:
+            ax[1].set_xlabel('Nominal Fitness')
+        ax[1].set_yscale('log')
+        ax[1].set_ylabel('Frequency')
+        ax[0].set_ylabel('Proportion')
+        ax[0].legend(loc='upper left')
+        plt.interactive(is_interactive)
+        
+        def adjust_ylim(ax, data):
+            raveled = np.ravel(data)
+            y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
+            y_lim = ax.get_ylim()
+            if not np.isinf(y_max) and not np.isnan(y_max):
+                y_max = max(y_max, y_lim[1])
+            if not np.isinf(y_min) and not np.isnan(y_min):
+                y_min = min(y_min, y_lim[0])
+            try:
+                ax.set_ylim(y_min, y_max)
+            except:
+                pass
+            
+        def initializer():
+            for n in range(2):
+                for line, x, y in zip(lines[n], g, p[n]):
+                    line.set_xdata(x[y[0] > 0])
+                    line.set_ydata(y[0][y[0] > 0])
+                    line.set_lw(1)
+            return lines.flatten()
+
+        def animator(i):
+            for n in range(2):
+                for line, x, y in zip(lines[n], g, p[n]):
+                    line.set_xdata(x[y[i] > 0])
+                    line.set_ydata(y[i][y[i] > 0])
+                    if i == 1:
+                        line.set_lw(4)
+            return lines.flatten()
+        
+        if stride is None:
+            out = fig
+        else:
+            adjust_ylim(ax[1], procs)
+            adjust_ylim(ax[0], normed)        
+            out = animation.FuncAnimation(fig, animator, init_func=initializer,
+                                          frames=n_frames, interval=interval,
+                                          blit=True, repeat_delay=2000)
+            plt.close()
         return out
 
 
@@ -877,6 +1134,46 @@ def mean_variance_plots(evs, labels=None, line_styles=None, subtitle=''):
 #                              Utility functions
 ################################################################################
 
+
+def convert(iterable, new_basetype):
+    """
+    Returns Numpy array with objects in iterable converted to new type.
+    """
+    return np.array([new_basetype(x) for x in iterable])
+
+
+def accurate_sum(a, dps=mp.dps):
+    """
+    Returns sum of elements in array `a` as multiprecision float.
+    """
+    with mp.workdps(dps):
+        i = np.argsort(np.abs(a))
+        return mp.fsum(a[i])
+
+
+def moment(frequency, x, n, dps=mp.dps):
+    """
+    Returns n-th raw moment as multiprecision float.
+    """
+    with mp.workdps(dps):
+        x = convert(x, mp.mpf) ** n
+        f = convert(frequency, mp.mpf)
+        return accurate_sum(np.multiply(f, x), dps) / accurate_sum(f, dps)
+
+
+def accurate_mean(frequency, x, dps=mp.dps):
+    """
+    Returns mean value of x as multiprecision float.
+    """
+    return moment(frequency, x, 1, dps)
+
+
+def accurate_variance(frequency, x, dps=mp.dps):
+    """
+    Returns variance of x as multiprecision float.
+    """
+    return moment(frequency, x, 2, dps) - moment(frequency, x, 1, dps) ** 2
+
    
 def mean_and_variance(x, p):
     """
@@ -891,30 +1188,15 @@ def mean_and_variance(x, p):
     return mean, variance
 
 
-def accurate_dot(a, b):
-    """
-    Slow dot product taking fsum of sorted terms.
-    """
-    product = np.multiply(a, b)
-    i = np.argsort(np.abs(product))
-    return mp.fsum(product[i])
-
-
 def relative_error(actual, desired, absolute=False):
     """
-    Returns actual/desired - 1, with 0/0 defined equal to 1.
-    
-    Raises `ValueError` if the arguments do not agree everywhere in sign.
+    Returns (actual - desired) / desired, with 0/0 defined equal to 0.
     """
     if np.shape(actual) != np.shape(desired):
         raise ValueError('Arguments are not identical in shape')
-    if not np.array_equal(np.sign(actual), np.sign(desired)):
-        raise ValueError('Arguments do not agree everywhere in sign')
-    result = np.zeros_like(actual)
-    i = desired[:] != 0
-    result[i] = actual[i] / desired[i] - 1
+    result = np.where(actual == desired, 0, (actual - desired) / desired)
     if absolute:
-        result = np.abs(result)
+        np.abs(result, out=result)
     return result
 
 
@@ -937,7 +1219,69 @@ def slice_to_support(p):
     a = np.argmax(positive)
     b = len(positive) - np.argmax(positive[::-1])
     return slice(a, b, None)
+        
+    
+def gamma_density(x, alpha=0.5, beta=500, dps=mp.dps):
+    """
+    Returns result of high-precision calculation of Gamma probability density.
+    
+    The intended use is in numerical integration, to check other calculations.
+    Integrate with an expression like `mp.quad(gamma_density, [a, b])`, where
+    `a` and `b` are the limits of the integral.
+    """
+    with mp.workdps(dps):
+        alpha = mp.mpf(alpha)
+        beta = mp.mpf(beta)
+        result = beta ** alpha / mp.gamma(alpha) * x ** (alpha - 1)
+        exponent = -beta * x
+        try:
+            result *= mp.exp(exponent)
+        except:
+            result *= exp_vector(exponent)
+        return result
 
+        
+def regularized_lower_incomplete_gamma(x, alpha=0.5, beta=500, dps=mp.dps):
+    """
+    Returns array of values of the regularized lower incomplete gamma function.
+    
+    This is the cumulative distribution function of the Gamma distribution with
+    shape parameter alpha and rate parameter beta. Parameter `x` is expected to
+    be iterable, and the function returns a 1-by-1 array if it is scalar. The
+    calculations are done with `dps` digits of of precision. The returned values
+    are at the same precision.
+    
+    We don't expect to experiment with values of `alpha` other than 0.5, which
+    is a very nice case: the standard `erf()` is applied to the square root of
+    `beta * x`. In other cases, the calculations take some seconds to complete.
+    """
+    with mp.workdps(dps):
+        z = np.multiply(x, mp.mpf(beta))
+        if alpha == 0.5:
+            return erf(z ** 0.5)
+        return mp.rgamma(alpha) * hypergeometric_incomplete_gamma(alpha, z, dps)
+
+    
+def hypergeometric_lower_incomplete_gamma(s, z, dps=mp.dps):
+    """
+    TO DO: FIX vectorized 3-argument function
+    Returns array of values of the lower incomplete gamma function.
+    
+    Parameter `z` is expected to be iterable, and an array is returned even if
+    it is scalar. The result is not regularized. Kummer's confluent hyper-
+    geometric function is used in the calculation. (See "Incomplete gamma
+    function" in Wikipedia for details.) The calculations are done with `dps`
+    digits of precision. The returned values are at the same precision.
+
+    The intended use is for testing. To calculate the cumulative distribution
+    function of the Gamma distribution, set `s` equal to alpha, and `z` equal
+    to the product of beta and the array of x values for which results are
+    desired. Multiply the result by `mp.rgamma(alpha)`, the reciprocal Gamma
+    function, to regularize.
+    """
+    with mp.workdps(dps):
+        s = mp.mpf(s)
+        return z ** s / s * hyp1f1_vector(s, s + 1, -z)         
 
 
 ################################################################################
