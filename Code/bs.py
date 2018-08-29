@@ -819,7 +819,7 @@ class Comparison(object):
         self.set_subtitle(subtitle)
         lengths = [len(p) for p in processes]
         self.length = np.min(lengths)
-        self.run_until_year(np.max(lengths) - 1)
+        self.run_until_epoch(np.max(lengths) - 1)
         if colors is None:
             colors = sns.color_palette()
         self.set_colors(colors)
@@ -835,7 +835,7 @@ class Comparison(object):
         them extend to the given epoch. Then the length of this object is set
         unconditionally to `epoch` + 1.
         """
-        new_length = year + 1
+        new_length = epoch + 1
         if new_length > self.length:
             for ev in self.processes:
                 ev(new_length - len(ev))
