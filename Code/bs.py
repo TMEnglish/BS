@@ -29,9 +29,10 @@ hyp1f1 = np.frompyfunc(mp.hyp1f1, 3, 1) # confluent hypergeometric 1_F_1
 hyperu = np.frompyfunc(mp.hyperu, 3, 1) # confluent hypergeometric 2_F_2
 
 
-# Generate JS/HTML animations.
+# Select type of animation.
 # HTML5 animations require (sometimes tricky) FFmpeg installation on the host.
 plt.rcParams['animation.html'] = 'jshtml'
+# plt.rcParams['animation.html'] = 'html5'
 
 
 # Use the Seaborn package to generate plots.
@@ -899,7 +900,7 @@ class Comparison(object):
         procs = [p[:length:stride] for p in self.processes]          # Introduce stride in views of unnormalized
         procs_last = [p[length-1:length] for p in self.processes]          # Views of last unnormalized frames
         normed = [p.normalized(end=length, stride=stride) for p in self.processes]
-        normed_last = [p / np.sum(p) for p in procs_last]
+        normed_last = [p.normalized(begin=length-1, end=length) for p in self.processes]
         normed = [np.concatenate((a, b)) for a, b in zip(normed, normed_last)]
         procs = [np.concatenate((a, b)) for a, b in zip(procs, procs_last)]
         p = [normed[:], procs[:]]
@@ -927,7 +928,8 @@ class Comparison(object):
                            lw=1, alpha=1)
         
         title = 'Evolution for {0} Years'.format(n_years)
-        fig.suptitle(title + self.subtitle)
+        fig.suptitle(title)
+        ax[0].set_title(self.subtitle)
         if effective:
             ax[1].set_xlabel('Effective Fitness')
         else:
