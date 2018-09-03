@@ -244,6 +244,7 @@ class Population(object):
         return P_t
     
     def update(self):
+        f = np.where(self.freqs < self.threshold, 0.0, self.freqs)
         try:
             np.dot(self.birthing, self.freqs, out=self.births)
         except:
@@ -432,8 +433,9 @@ class Distribution(object):
             assert self.domain[self.zero_index] == 0
         else:
             self.zero_index = np.argmin(np.abs(self.domain))
-            if self.domain[self.zero_index] != 0:
-                warnings.warn('Zero is not in the domain')
+            # The warning presently seems to be nothing but an annoyance.
+            # if self.domain[self.zero_index] != 0:
+                # warnings.warn('Zero is not in the domain')
         self.p = np.zeros_like(self.domain)  # p has base type of domain
         self.p[self.zero_index] = 1
         
@@ -726,6 +728,7 @@ class EffectsDistribution(Distribution):
     
     def reweight(self, percent_beneficial):
         """
+        TO DO: ERRONEOUS
         Sets the probability of positive effect to `percent_beneficial`.
         
         That is, the probabilities of positive effects are scaled so that they
@@ -737,6 +740,13 @@ class EffectsDistribution(Distribution):
         self.p[x > 0] *= percent_beneficial / float(mp.fsum(self.p[x > 0][::-1]))
         self.p[x <= 0] *= (1 - percent_beneficial) / float(mp.fsum(self.p[x <= 0]))
         self.normalize()
+        
+    def deleterious_to_advantageous(self):
+        """
+        Returns ratio of probabilities of deleterious and advantageous effects.
+        """
+        z = self.zero_index
+        return mp.fsum(self.p[:z]) / mp.fsum(self.p[:z:-1])
     
     def iid_effects(self, number_of_mutations=1, log_number_of_loci=0,
                           truncate_self_convolution=False):
@@ -941,6 +951,20 @@ class Comparison(object):
         plt.interactive(is_interactive)
         
         def adjust_ylim(ax, data):
+            for d in data:
+                raveled = np.ravel(d)
+                y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
+                y_lim = ax.get_ylim()
+                if not np.isinf(y_max) and not np.isnan(y_max):
+                    y_max = max(y_max, y_lim[1])
+                if not np.isinf(y_min) and not np.isnan(y_min):
+                    y_min = min(y_min, y_lim[0])
+            try:
+                ax.set_ylim(y_min, y_max)
+            except:
+                pass
+        
+        def FORMER_adjust_ylim(ax, data):
             raveled = np.ravel(data)
             y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
             y_lim = ax.get_ylim()
