@@ -947,7 +947,7 @@ class Comparison(object):
         ax[1].set_yscale('log')
         ax[1].set_ylabel('Frequency')
         ax[0].set_ylabel('Proportion')
-        ax[0].legend(loc='upper left')
+        ax[0].legend(loc='best')
         plt.interactive(is_interactive)
         
         def adjust_ylim(ax, data):
@@ -1050,6 +1050,7 @@ class Comparison(object):
                                           label=labels[i], lw=4, zorder=10,
                                           ls=self.linestyles[i],
                                           c=self.colors[i],)
+                lines[n][i].set_animated(True)
         for n in range(2):
             for i in range(len(g)):
                 w = p[n][i][0] > 0
