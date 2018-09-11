@@ -205,15 +205,15 @@ class BS_Evolution(Evolution):
 class Population(object):
     def __init__(self, initial_freqs, mutations, updates_per_year=1,
                        norm=None, threshold=1e-9, lossy=False, label='',
-                       matrix=False):
+                       matrix=False, bias=0):
         self.initial_freqs = initial_freqs
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
         self.annual_factors = initial_freqs.factors
-        self.death_factor = self.annual_factors.death / updates_per_year
+        self.death_factor = (self.annual_factors.death + bias) / updates_per_year
         self.updates_per_year = updates_per_year
         n = len(initial_freqs)
-        self.birth_factors = self.annual_factors.birth / updates_per_year
+        self.birth_factors = (self.annual_factors.birth + bias) / updates_per_year
         self.mutations = mutations
         if matrix:
             self.birthing = mutations.matrix(lossy) * self.birth_factors
