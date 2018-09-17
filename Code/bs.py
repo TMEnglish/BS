@@ -30,7 +30,7 @@ hyperu = np.frompyfunc(mp.hyperu, 3, 1) # confluent hypergeometric 2_F_2
 
 
 # Select type of animation.
-# HTML5 animations require (sometimes tricky) FFmpeg installation on the host.
+# HTML5 animations require FFmpeg installation with non-default settings.
 plt.rcParams['animation.html'] = 'jshtml'
 # plt.rcParams['animation.html'] = 'html5'
 
@@ -187,7 +187,7 @@ class Evolution(object):
         Returns mean and variance of fitnesses at each point in the trajectory.
         """
         return mean_and_variance(self.growth_factors(effective),
-                                 self.normalized())
+                                 self.normalized())              # TO DO: Is normalization still necessary?
 
 
 class BS_Evolution(Evolution):
@@ -198,23 +198,26 @@ class BS_Evolution(Evolution):
         """
         Converts `bs` output of Basener's code to `Evolution` instance.
         """
+        raise Exception('BS_Evolution needs to set new members of Evolution')
         self.p = BS_Population(bs, label)
         self.trajectory = bs['Psolution']        
 
         
 class Population(object):
     def __init__(self, initial_freqs, mutations, updates_per_year=1,
-                       norm=None, threshold=1e-9, lossy=False, label='',
-                       matrix=False, bias=0):
+                       norm=None, threshold=1e-9, continuous=False, lossy=False,
+                       label='', matrix=False, bias=0):
+        if continuous and norm is None:
+            raise Exception('Must set `norm` for continuous thresholding')
         self.initial_freqs = initial_freqs
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
         self.annual_factors = initial_freqs.factors
         self.death_factor = (self.annual_factors.death + bias) / updates_per_year
-        self.updates_per_year = updates_per_year
-        n = len(initial_freqs)
         self.birth_factors = (self.annual_factors.birth + bias) / updates_per_year
+        self.updates_per_year = updates_per_year
         self.mutations = mutations
+        # n = len(initial_freqs) UNUSED?
         if matrix:
             self.birthing = mutations.matrix(lossy) * self.birth_factors
             m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
@@ -228,6 +231,7 @@ class Population(object):
             """HACK HACK HACK"""
         self.norm = norm
         self.threshold = threshold
+        self.continuous = continuous
         self.lossy = lossy
         self.label = label
         self.zero = self.freqs[0] * 0
@@ -242,9 +246,20 @@ class Population(object):
         if normed:
             P_t /= float(mp.fsum(P_t))
         return P_t
-    
+
+    def __call__(self, P, t):
+        """
+        Returns dP/dt of BS Equation 3.2. For use by numerical IVP solver.
+        """
+        try:
+            np.dot(self.birthing, P, out=self.births)
+        except:
+            np.multiply(P, self.birth_factors, out=self.births)
+            self.births = self.mutations(self.births, self.lossy)
+        self.births -= self.death_factor * P
+        return self.births  # actually births - deaths
+        
     def update(self):
-        f = np.where(self.freqs < self.threshold, 0.0, self.freqs)
         try:
             np.dot(self.birthing, self.freqs, out=self.births)
         except:
@@ -254,11 +269,19 @@ class Population(object):
         self.freqs += self.births
         
     def annual_update(self):
+        """
+        """
+        if self.continuous:
+            zeroed = self.freqs == 0
         for _ in range(self.updates_per_year):
             self.update()
-        if not self.norm is None:
-            relatively_small = self.freqs <= self.threshold * self.norm(self.freqs)
-            self.freqs[relatively_small] = self.zero  
+            if not self.norm is None:
+                small = self.freqs <= self.threshold * self.norm(self.freqs)
+                if self.continuous:
+                    np.logical_or(small, zeroed, out=zeroed)
+                    self.freqs[zeroed] = self.zero
+                else:
+                    self.freqs[small] = self.zero
         return self.freqs
     
     def birth_factors(self, effective=False):
@@ -283,7 +306,7 @@ class Population(object):
         """
         Returns the frequencies of fitnesses in the current population.
         
-        If `normalize` is true, proportions are returned instead of frequencies.
+        If `normed` is true, proportions are returned instead of frequencies.
         """
         if normed:
             return self.freqs / self.size()
@@ -291,21 +314,32 @@ class Population(object):
     
     def size(self):
         """
-        Returns the size of the population, relative to its size in year 0.
-        
-        The size of the population is the sum of the frequencies of the discrete
-        fitnesses. The size of the initial population is equated with 1. Thus if
-        the current frequences sum to F, then the size of the population has
-        changed by a factor of F since year 0.
+        Returns an accurate sum of the frequencies.
         """
         return accurate_sum(self.freqs)
     
+    def normalize(self):
+        """
+        Divides the frequencies by their sum.
+        """
+        self.freqs[:] = self.freqs / accurate_sum(self.freqs)
+    
+    def shift(self, n):
+        """
+        Shifts the frequency distribution by `n` bins.
+        
+        If `n` is positive, the shift is to the right, and if `n` is negative,
+        the shift is to the left. Vacated bins have their frequencies set to 0.
+        """
+        if n > 0:
+            self.freqs[n:] = self.freqs[:-n]
+            self.freqs[:n] = self.zero
+        else:
+            self.freqs[:n] = self.freqs[-n:]
+            self.freqs[n:] = self.zero
+    
     def mean(self, effective=False):
-        """
-        TO DO: TEST
-        """
         return moment(self.freqs, self.growth_factors(effective), 1)
-        # return mp.dot(self.freqs, self.growth_factors(effective)) / self.size()
     
     def mean_and_variance(self, effective=False):
         factors = self.growth_factors(effective)
@@ -582,6 +616,12 @@ class Distribution(object):
         Index or slice the distribution.
         """
         return self.p[index_or_slice]
+
+    def __setitem__(self, index_or_slice, value):
+        """
+        Assign value to element or slice of the distribution.
+        """
+        self.p[index_or_slice] = value
 
 
 
