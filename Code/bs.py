@@ -10,6 +10,7 @@ import pickle
 import warnings
 from matplotlib import animation, rc
 from mpmath import mp
+from scipy.integrate import odeint
 
 
 # Set the default number of digits of precision in mpmath multiprecision
@@ -90,7 +91,6 @@ N_YEARS['None'] = N_YEARS['NoneExact']
 ################################################################################
 #          Classes for populations and evolutionary trajectories
 ################################################################################
-
 
 class Evolution(object):
     """
@@ -190,6 +190,16 @@ class Evolution(object):
                                  self.normalized())              # TO DO: Is normalization still necessary?
 
 
+class IVP(Evolution):
+    """
+    Record evolutionary trajectory calculated by solving initial value problem.
+    """
+    def __init__(self, population, n_years):
+        super().__init__(population)
+        self.trajectory = odeint(population, population[:], np.arange(n_years + 1))
+        self.sums = np.sum(self.trajectory, axis=1)
+
+
 class BS_Evolution(Evolution):
     """
     Output of Basener's code, wrapped in an `Evolution` instance.
@@ -258,7 +268,7 @@ class Population(object):
             self.births = self.mutations(self.births, self.lossy)
         self.births -= self.death_factor * P
         return self.births  # actually births - deaths
-        
+            
     def update(self):
         try:
             np.dot(self.birthing, self.freqs, out=self.births)
