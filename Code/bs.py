@@ -99,10 +99,14 @@ class Evolution(object):
     The n-th element of the evolutionary trajectory gives the frequencies of
     fitnesses (alternatively, growth factors) in the population after n epochs.
     """
-    def __init__(self, population, n_epochs=0, years_per_epoch=1, x_stride=1):
+    def __init__(self, population, n_epochs=0, years_per_epoch=1, x_stride=1,
+                       use_ode_solver=False):
         """
         Records the trajectory of `population` over `n_epochs` of evolution.
         """
+        if use_ode_solver and not population.norm is None:
+            raise Exception('Cannot use ODE solver when thresholding')
+        self.use_ode_solver = use_ode_solver
         self.p = population
         self.trajectory = np.array([self.p[::x_stride]])
         self.sums = np.array([np.sum(self.p[:])])
@@ -111,6 +115,31 @@ class Evolution(object):
         self(n_epochs)
    
     def __call__(self, n_epochs=1):
+        """
+        Extends the evolutionary trajectory by the given number of epochs.
+        """
+        if n_epochs < 1:
+            return
+        n = len(self.trajectory)
+        new_trajectory = np.empty((n_epochs + n, len(self.p[::self.xstride])))
+        new_trajectory[:n] = self.trajectory
+        self.trajectory = new_trajectory
+        new_sums = np.empty(n_epochs + n)
+        new_sums[:n] = self.sums
+        self.sums = new_sums
+        if self.use_ode_solver:
+            extension = self.p.solver(n_epochs, self.years_per_epoch)
+            extension *= 2 ** -self.p.log_scalar
+            self.trajectory[n:] = extension[:, ::self.xstride]
+            self.sums[n:] = np.sum(extension, axis=1)
+        else:
+            for i in range(n, n + n_epochs):
+                for _ in range(self.years_per_epoch):
+                    self.p.annual_update()
+                self.trajectory[i] = self.p[::self.xstride]
+                self.sums[i] = np.sum(self.p[:])
+   
+    def __Xcall__(self, n_epochs=1):
         """
         Extends the evolutionary trajectory by the given number of epochs.
         """
@@ -190,16 +219,6 @@ class Evolution(object):
                                  self.normalized())              # TO DO: Is normalization still necessary?
 
 
-class IVP(Evolution):
-    """
-    Record evolutionary trajectory calculated by solving initial value problem.
-    """
-    def __init__(self, population, n_years):
-        super().__init__(population)
-        self.trajectory = odeint(population, population[:], np.arange(n_years + 1))
-        self.sums = np.sum(self.trajectory, axis=1)
-
-
 class BS_Evolution(Evolution):
     """
     Output of Basener's code, wrapped in an `Evolution` instance.
@@ -227,7 +246,6 @@ class Population(object):
         self.birth_factors = (self.annual_factors.birth + bias) / updates_per_year
         self.updates_per_year = updates_per_year
         self.mutations = mutations
-        # n = len(initial_freqs) UNUSED?
         if matrix:
             self.birthing = mutations.matrix(lossy) * self.birth_factors
             m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
@@ -245,6 +263,7 @@ class Population(object):
         self.lossy = lossy
         self.label = label
         self.zero = self.freqs[0] * 0
+        self.log_scalar = 0
         
     def solve(self):
         W = self.birthing - self.death_factor * np.eye(len(self))
@@ -268,6 +287,24 @@ class Population(object):
             self.births = self.mutations(self.births, self.lossy)
         self.births -= self.death_factor * P
         return self.births  # actually births - deaths
+    
+    def solver(self, n_epochs, years_per_epoch):
+        """
+        Get errors with `years_per_epoch` > 1.
+        """
+        # Scale frequencies by power of 2 to make the maximum exponent
+        # about 512.
+        log_scalar = 512 - round(np.log2(max(self.freqs)))
+        self.log_scalar += log_scalar
+        self.freqs[:] *= 2 ** log_scalar
+        # Solve for one extra unit of time, discard that part of result
+        time_step = years_per_epoch * self.updates_per_year
+        times = np.arange(n_epochs + 2) * time_step
+        times[-1] = times[-2] + 1
+        solution = odeint(self, self.freqs, times, rtol=1e-13, atol=1e-11)
+        solution = solution[1:-1]
+        self.freqs[:] = solution[-1]
+        return solution
             
     def update(self):
         try:
@@ -394,56 +431,6 @@ class BS_Population(Population):
         self.lossy = True
         self.label = label
         self.zero = 0
-
-
-class XBS_Population(Population):
-    """
-    Override the `annual_update` method of the superclass.
-    """
-    BS_THRESHOLD = 1e-9
-    
-    def __init__(self, initial_distribution, births_redistribution, label='',
-                 n_updates_per_year=1, threshold_norm=None, endpoint=True):
-        """
-        Register subclass-specific params; invoke the superclass initializer.
-        
-        The `threshold_norm` ... `endpoint` ...
-        """
-        self.threshold_norm = threshold_norm
-        self.endpoint = endpoint
-        super().__init__(initial_distribution, births_redistribution, 
-                         label=label, n_updates_per_year=n_updates_per_year)
-        if not self.endpoint:
-            self.freqs[-1] = 0
-
-    def annual_update(self):
-        """
-        Treat factors as linear factors, set subthreshold frequencies to zero.
-        
-        As in Basener's script, births that are distributed outside the range
-        of growth factors are discarded. Also, the death rate and birth factors are
-        treated as linear rather than logarithmic. The error is small when the
-        factors are close to zero. A question here is whether increasing the
-        number of updates per year, and scaling the factors inversely, increases
-        the accuracy (when there is no thresholding).
-        
-        If the instance was created with `endpoint=False`, then the uppermost
-        growth factor is set to zero at the end of each iteration.
-        
-        If the instance was created with `threshold_norm` ...
-        """
-        for _ in range(self.n_updates_per_year):
-            births = self.freqs * self.birth_factors
-            births = np.convolve(births, self.redistribution[:], mode='valid')
-            self.freqs *= 1.0 - self.death_factor
-            self.freqs += births
-            if not self.threshold_norm is None:
-                norm = self.threshold_norm(self.freqs)
-                above_threshold = self.freqs >= self.BS_THRESHOLD * norm
-                self.freqs *= above_threshold
-            if not self.endpoint:
-                self.freqs[-1] = 0
-        self.year += 1
 
 
 
