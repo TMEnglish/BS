@@ -37,7 +37,7 @@ plt.rcParams['animation.html'] = 'jshtml'
 
 
 # Use the Seaborn package to generate plots.
-sns.set() 
+sns.set()
 sns.set_context("notebook", font_scale=1, rc={"lines.linewidth": 2})
 sns.set_style("darkgrid", {"axes.facecolor": ".92"})
 sns.set_palette(sns.color_palette("Set2", 4))
@@ -62,6 +62,18 @@ class Factors(object):
         self.birth = self.growth + death
         assert self.birth[0] == 0
         self.effects = np.concatenate((-self.birth[::-1], self.birth[1:]))
+
+
+def accurate_respace(linspaced):
+    """
+    Returns linearly spaced multiprecision floats to replace `linspaced`.
+    
+    It is assumed that the first and last values of array `linspaced` were
+    written exactly as a with at most 15 digits.
+    """
+    mp.nint(-0.1 * 10**15) / 10**15
+    mp.mpf('{:1.15f}'.format(0.1))
+    x = mp.linspace(self.domain[0], self.domain[-1], len(self.domain))
 
 
 ################################################################################
@@ -128,8 +140,8 @@ class Evolution(object):
         new_sums[:n] = self.sums
         self.sums = new_sums
         if self.use_ode_solver:
-            extension = self.p.solver(n_epochs, self.years_per_epoch)
-            extension *= 2 ** -self.p.log_scalar
+            extension, bias = self.p.ode_solver(n_epochs, self.years_per_epoch)
+            extension *= 2 ** -bias                    # TO DO: Avoid overflow
             self.trajectory[n:] = extension[:, ::self.xstride]
             self.sums[n:] = np.sum(extension, axis=1)
         else:
@@ -138,25 +150,6 @@ class Evolution(object):
                     self.p.annual_update()
                 self.trajectory[i] = self.p[::self.xstride]
                 self.sums[i] = np.sum(self.p[:])
-   
-    def __Xcall__(self, n_epochs=1):
-        """
-        Extends the evolutionary trajectory by the given number of epochs.
-        """
-        if n_epochs < 1:
-            return
-        n = len(self.trajectory)
-        new_trajectory = np.empty((n_epochs + n, len(self.p[::self.xstride])))
-        new_trajectory[:n] = self.trajectory
-        self.trajectory = new_trajectory
-        new_sums = np.empty(n_epochs + n)
-        new_sums[:n] = self.sums
-        self.sums = new_sums
-        for i in range(n, n + n_epochs):
-            for _ in range(self.years_per_epoch):
-                self.p.annual_update()
-            self.trajectory[i] = self.p[::self.xstride]
-            self.sums[i] = np.sum(self.p[:])
 
     def __getitem__(self, index_or_slice):
         """
@@ -201,9 +194,8 @@ class Evolution(object):
         """
         Returns the trajectory with each point normalized.
         """
-        # t = self.trajectory[begin:end:stride]
-        # return (t.T / np.sum(t, axis=1).T).T
-        return (self.trajectory[begin:end:stride].T / self.sums[begin:end:stride]).T
+        t = self.trajectory[begin:end:stride]
+        return (t.T / self.sums[begin:end:stride]).T
     
     def growth_factors(self, effective=False):
         return self.p.growth_factors(effective)[::self.xstride]
@@ -216,7 +208,7 @@ class Evolution(object):
         Returns mean and variance of fitnesses at each point in the trajectory.
         """
         return mean_and_variance(self.growth_factors(effective),
-                                 self.normalized())              # TO DO: Is normalization still necessary?
+                                 self.normalized())
 
 
 class BS_Evolution(Evolution):
@@ -229,7 +221,7 @@ class BS_Evolution(Evolution):
         """
         raise Exception('BS_Evolution needs to set new members of Evolution')
         self.p = BS_Population(bs, label)
-        self.trajectory = bs['Psolution']        
+        self.trajectory = bs['Psolution']
 
         
 class Population(object):
@@ -265,58 +257,148 @@ class Population(object):
         self.zero = self.freqs[0] * 0
         self.log_scalar = 0
         
-    def solve(self):
-        W = self.birthing - self.death_factor * np.eye(len(self))
-        self.values, self.vectors = np.eig(W)
-        self.c = la.solve(self.e_vectors, self.initial_freqs)
+    def eigen(self):
+        """
+        Returns the eigenvalues and eigenvectors of matrix W (BS Section 4).
         
-    def solution(self, t, normed=False):
-        P_t = np.dot(self.e_vectors, self.c * np.exp(t * self.e_values)).real
+        The calculation is not redone if it's been done previously.
+        """
+        try:
+            return self.e_values, self.e_vectors
+        except:
+            pass
+        # The `birthing` matrix can be huge, so we do not copy it, but instead
+        # modify it temporarily to obtain the matrix W of BS Section 4.
+        W = self.birthing
+        W[np.diag_indices(len(self))] -= self.death_factor
+        self.e_values, self.e_vectors = la.eig(W)
+        W[np.diag_indices(len(self))] += self.death_factor
+        return self.e_values, self.e_vectors
+        
+    def equilibrium(self):
+        """
+        Returns the equilibrium distribution of the population over fitnesses.
+        
+        The equilibrium distribution is the real part of the eigenvector
+        corresponding to the eigenvalue with the greatest real part, scaled to
+        unit length.
+        """
+        # The eigenvectors are in columns.
+        e_values, e_vectors = self.eigen()
+        j = np.argmax(e_values.real)
+        dominant = e_vectors[:, j].real
+        
+        # Scale the real part of the dominant eigenvector to unit length.
+        return dominant / math.fsum(dominant)
+
+    def solve_for_constraints(self):
+        """
+        TO DO: This needs high-precision arithemetic.
+        """
+        try:
+            return self.c
+        except:
+            pass
+        _, e_vectors = self.eigen()
+        self.c = la.solve(e_vectors, self.initial_freqs)
+        return self.c
+        
+    def solution_using_eigenvectors(self, t, normed=False):
+        """
+        TO DO: This may need high-precision arithmetic.
+        """
+        e_values, e_vectors = self.eigen()
+        c = self.solve_for_constraints()
+        P_t = np.dot(e_vectors, c * np.exp(t * e_values)).real
         if normed:
             P_t /= float(mp.fsum(P_t))
         return P_t
+    
+    def birthTo_rates(self, P):
+        """
+        Returns the rates of birth TO organisms in fitness classes.
+        
+        The birth-TO rates correspond to B^out of BS Equation 3.4.
+        """
+        # Multiply vectors of frequencies and birth factors pointwise.
+        return np.multiply(P, self.birth_factors)
+    
+    def birthOf_rates(self, P):
+        """
+        Returns the rates of birth OF organisms in fitness classes.
 
-    def __call__(self, P, t):
+        The birth-OF rates correspond to B^in of BS Equation 3.4.
+        """
+        try:
+            # Multiply `birthing` matrix [b_j f_ij] by frequency vector.
+            births_of = np.dot(self.birthing, P)
+        except:
+            # Convolve the birth-TO rates of the classes with the mutational
+            # effects distribution in order to obtain the rates of birth OF
+            # organisms of the fitness classes.
+            births_to = self.birthTo_rates(P)
+            births_of = self.mutations(births_to, self.lossy)
+        return births_of
+    
+    def evaluate_theorem(self, P=None):
+        """
+        Returns values of the two right-hand-side terms Eq. 3.4 in BS's theorem.
+        
+        The sum of the two values is the rate of change in mean fitness for a
+        population with frequency distribution `P` over fitnesses. The first of
+        the two is the rate of change due to selection, and the second is the
+        rate of change due to mutation.
+                        
+        The default value of `P` is the frequency distribution stored by this
+        `Population` instance.
+        
+        TO DO: Does this work for multiprecision float P?????????????????????????????????
+        """
+        if P is None:
+            P = self.freqs
+        m = self.birth_factors - self.death_factor
+        mean_m, var_m = mean_and_variance(m, P / math.fsum(P))
+        B_in = self.birthOf_rates(P)
+        B_out = self.birthTo_rates(P)
+        return var_m, np.dot(B_in - B_out, m - mean_m) / math.fsum(P)
+        
+            
+    def __call__(self, P, t=0):
         """
         Returns dP/dt of BS Equation 3.2. For use by numerical IVP solver.
         """
-        try:
-            np.dot(self.birthing, P, out=self.births)
-        except:
-            np.multiply(P, self.birth_factors, out=self.births)
-            self.births = self.mutations(self.births, self.lossy)
-        self.births -= self.death_factor * P
-        return self.births  # actually births - deaths
+        rates = self.birthOf_rates(P)
+        rates -= self.death_factor * P
+        return rates
     
-    def solver(self, n_epochs, years_per_epoch):
+    def ode_solver(self, n_epochs, years_per_epoch):
         """
-        Get errors with `years_per_epoch` > 1.
+        Returns scaled frequencies at ends of epochs, along with log-scalar.
+        
+        To obtain the correct frequencies, divide the returned frequencies
+        by 2 raised to the power of the returned log-scalar.
         """
         # Scale frequencies by power of 2 to make the maximum exponent
-        # about 512.
+        # about 512. This improves accuracy.
         log_scalar = 512 - round(np.log2(max(self.freqs)))
         self.log_scalar += log_scalar
         self.freqs[:] *= 2 ** log_scalar
-        # Solve for one extra unit of time, discard that part of result
-        time_step = years_per_epoch * self.updates_per_year
-        times = np.arange(n_epochs + 2) * time_step
-        times[-1] = times[-2] + 1
+        # The time unit is 1 /`updates_per_year`
+        duration = n_epochs * years_per_epoch * self.updates_per_year
+        times = np.linspace(0, duration, duration + 1)
         solution = odeint(self, self.freqs, times, rtol=1e-13, atol=1e-11)
-        solution = solution[1:-1]
         self.freqs[:] = solution[-1]
-        return solution
+        stride = years_per_epoch* self.updates_per_year
+        return solution[1::stride], self.log_scalar
             
     def update(self):
-        try:
-            np.dot(self.birthing, self.freqs, out=self.births)
-        except:
-            np.multiply(self.freqs, self.birth_factors, out=self.births)
-            self.births = self.mutations(self.births, self.lossy)
+        births = self.birthOf_rates(self.freqs)
         self.freqs *= 1 - self.death_factor
-        self.freqs += self.births
+        self.freqs += births
         
     def annual_update(self):
         """
+        Use Euler's method to solve for the next year's frequencies.
         """
         if self.continuous:
             zeroed = self.freqs == 0
@@ -332,7 +414,7 @@ class Population(object):
         return self.freqs
     
     def birth_factors(self, effective=False):
-        """        
+        """
         Returns growth factors minus the smallest of the growth factors.
         
         This assumes that the effective death factor does not depend on the
@@ -533,9 +615,9 @@ class Distribution(object):
     
     def normalize(self):
         """
-        Divides all probabilities by their (accurate) sum.
+        Divides all probabilities by their sum.
         """
-        self.p[:] = self.p / self.norm()
+        self.p[:] = self.p / self.norm()  # preserve base type
     
     def set_label(self, label):
         """
@@ -664,18 +746,21 @@ class GaussianFrequencies(Frequencies):
         super().__init__(factors)
         self.given_mean = mean
         self.given_std = std
-        z = (self.domain - mean) / std
         if density:
+            # Gives a close match of BS's initial distribution.
+            z = (self.domain - mean) / std
             self.p[:] = np.exp(-0.5 * z ** 2)
         else:
             # Difference the cumulative distribution function at the endpoints
             # of subintervals centered on equispaced growth factors, using
             # multiprecision floating point numbers in the calculations. This
             # is equivalent to integrating the density over each subinterval.
-            delta_z = mp.mpf(factors.delta) / std
-            ends = np.concatenate(([z[0] - delta_z / 2], z + delta_z / 2))
-            cdf = 0.5 * (1 + erf(ends / mp.sqrt(2)))
-            self.p[:] = cdf[1:] - cdf[:-1]
+            #
+            z = (mp_float(self.domain) - mean) / std  # centers of subintervals      
+            width = (z[-1] - z[0]) / (len(z) - 1)
+            endpoints = np.concatenate(([z[0] - width / 2], z + width / 2))
+            cdf = 0.5 * (1 + erf(endpoints / mp.sqrt(2))) 
+            self.p[:] = cdf[1:] - cdf[:-1]           # preserves the type of `p`
         self.p[np.abs(z) > crop] = 0
         self.normalize()
 
@@ -703,10 +788,10 @@ class EffectsDistribution(Distribution):
         the Gaussian case of the article. The Boolean `density` determines
         whether probability densities are used instead of probability masses
         in construction of the distribution. The Boolean `normed` determines
-        whether or not the constructed distribution is normalized. 
+        whether or not the constructed distribution is normalized.
         
         In any case, a symmetric distribution is constructed by reflecting
-        the probabilities of positive effects in the zero-effect axis. 
+        the probabilities of positive effects in the zero-effect axis.
         
         If `density` is true, then the probability of a non-negative effect is
         the probability density at the effect, multiplied by the length of the
@@ -838,7 +923,7 @@ class EffectsDistribution(Distribution):
         ax.set_title(title + subtitle)
         ax.set_xlabel('Change in Nominal Growth Factor')
         ax.set_ylabel('Probability [CORRECT LABEL?]')
-        return fig 
+        return fig
     
     def __call__(self, other, discard_excess=False):
         return self.convolve(other, discard_excess)
@@ -943,7 +1028,7 @@ class Comparison(object):
         labels = [str(p.p) for p in self.processes]
         
         # Each process has its own growth factors
-        g = [p.growth_factors(effective) for p in self.processes] 
+        g = [p.growth_factors(effective) for p in self.processes]
         procs = [p[:length:stride] for p in self.processes]          # Introduce stride in views of unnormalized
         procs_last = [p[length-1:length] for p in self.processes]          # Views of last unnormalized frames
         normed = [p.normalized(end=length, stride=stride) for p in self.processes]
@@ -961,7 +1046,7 @@ class Comparison(object):
         for n in range(2):
             for i in range(len(g)):
                 w = p[n][i][-1] > 0  # Boolean indices of support
-                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w], 
+                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w],
                                           label=labels[i], lw=4, zorder=10,
                                           ls=self.linestyles[i],
                                           c=self.colors[i],)
@@ -1035,7 +1120,7 @@ class Comparison(object):
             out = fig
         else:
             adjust_ylim(ax[1], procs)
-            adjust_ylim(ax[0], normed) 
+            adjust_ylim(ax[0], normed)
             out = animation.FuncAnimation(fig, animator, init_func=initializer,
                                           frames=n_frames, interval=interval,
                                           blit=True, repeat_delay=2000)
@@ -1083,7 +1168,7 @@ class Comparison(object):
         for n in range(2):
             for i in range(len(g)):
                 w = p[n][i][-1] > 0  # Boolean indices of support
-                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w], 
+                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w],
                                           label=labels[i], lw=4, zorder=10,
                                           ls=self.linestyles[i],
                                           c=self.colors[i],)
@@ -1143,7 +1228,7 @@ class Comparison(object):
             out = fig
         else:
             adjust_ylim(ax[1], procs)
-            adjust_ylim(ax[0], normed)        
+            adjust_ylim(ax[0], normed)
             out = animation.FuncAnimation(fig, animator, init_func=initializer,
                                           frames=n_frames, interval=interval,
                                           blit=True, repeat_delay=2000)
@@ -1345,7 +1430,7 @@ def hypergeometric_lower_incomplete_gamma(s, z, dps=mp.dps):
     """
     with mp.workdps(dps):
         s = mp.mpf(s)
-        return z ** s / s * hyp1f1_vector(s, s + 1, -z)         
+        return z ** s / s * hyp1f1_vector(s, s + 1, -z)
 
 
 ################################################################################
