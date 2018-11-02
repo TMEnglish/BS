@@ -11,6 +11,7 @@ import warnings
 from matplotlib import animation, rc
 from mpmath import mp
 from scipy.integrate import odeint
+from scipy.integrate import solve_ivp
 
 
 # Set the default number of digits of precision in mpmath multiprecision
@@ -20,14 +21,37 @@ mp.dps = 50
 # Make some mpmath functions into quasi-ufuncs taking either scalar or
 # array arguments.
 
-mp_float = np.frompyfunc(mp.mpf, 1, 1)
+mp_float = np.frompyfunc(mp.mpf, 1, 1)  # type conversion
+mp_exp = np.frompyfunc(mp.exp, 1, 1)
 erf = np.frompyfunc(mp.erf, 1, 1)
 erfc = np.frompyfunc(mp.erfc, 1, 1)
-exp = np.frompyfunc(mp.exp, 1, 1)
 gamma = np.frompyfunc(mp.gamma, 1, 1)
 rgamma = np.frompyfunc(mp.rgamma, 1, 1) # reciprocal gamma
 hyp1f1 = np.frompyfunc(mp.hyp1f1, 3, 1) # confluent hypergeometric 1_F_1
 hyperu = np.frompyfunc(mp.hyperu, 3, 1) # confluent hypergeometric 2_F_2
+
+
+# Provide alternatives for some NumPy functions that do not handle
+# mpmath's multiprecision floating-point type.
+
+def linspace(a, b, nsteps):
+    """
+    Tries to return result of NumPy linspace, falls back on mpmath version.
+    """
+    try:
+        return np.linspace(a, b, nsteps)
+    except:
+        return np.array(mp.linspace(a, b, nsteps))
+
+def exp(x):
+    """
+    Tries to return result of NumPy exp, falls back on mpmath version.
+    """
+    try:
+        return np.exp(x)
+    except:
+        return mp_exp(x)
+
 
 
 # Select type of animation.
@@ -46,35 +70,53 @@ sns.set_palette(sns.color_palette("Set2", 4))
 
 class Factors(object):
     """
-    Stores Malthusian parameters exactly equal to those in Basener's code.
+    Stores death, birth, and growth factors, as well as mutational effects.
     """
-    def __init__(self, n_types, death=0.1, max_growth=0.15, exclude_max=False):
-        self.n_types = n_types
+    def __init__(self, n_classes, death=0.1, max_growth=0.15, exclude_max=False):
+        """
+        Set growth and birth factors, as well as mutational effects.
+        
+        With default arguments, the calculated values are exactly equal to
+        those calculated in Basener's code. The supplied value of `n_classes` is
+        the number of fitness classes. Set `exclude_max` to true in order to
+        follow Basener in excluding the upper endpoint of the fitness interval.
+        When including the upper endpoint, add one to the number of types
+        (e.g., the 500 fitness classes of Basener and Sanford become 501).
+        
+        The type of all floating point numbers of this object is determined by
+        `type(max_growth + death)`. Put simply, to work in multiprecision
+        floating point, supply a number of that type as one of the arguments.
+        """
+        basetype = type(max_growth + death)
+        death = basetype(death)
+        max_growth = basetype(max_growth)
+        self.n_classes = n_classes
         self.death = death
         self.max_growth = max_growth
         self.exclude_max = exclude_max
         if exclude_max:
-            self.delta = (max_growth + death) / n_types
-            self.growth = np.linspace(-death, max_growth, n_types+1)[:-1]
+            self.delta = (max_growth + death) / n_classes
+            self.growth = linspace(-death, max_growth, n_classes+1)[:-1]
         else:
-            self.delta = (max_growth + death) / (n_types - 1)
-            self.growth = np.linspace(-death, max_growth, n_types)
+            self.delta = (max_growth + death) / (n_classes - 1)
+            self.growth = linspace(-death, max_growth, n_classes)
+        self.growth = convert(self.growth, basetype)
         self.birth = self.growth + death
         assert self.birth[0] == 0
         self.effects = np.concatenate((-self.birth[::-1], self.birth[1:]))
+        
+    def convert(self, basetype):
+        """
+        Converts all floating-point members to given type.
+        """
+        self.death = basetype(self.death)
+        self.max_growth = basetype(self.max_growth)
+        self.delta = basetype(self.delta)
+        self.growth = convert(self.growth, basetype)
+        self.birth = convert(self.birth, basetype)
+        self.effects = convert(self.effects, basetype)
 
-
-def accurate_respace(linspaced):
-    """
-    Returns linearly spaced multiprecision floats to replace `linspaced`.
-    
-    It is assumed that the first and last values of array `linspaced` were
-    written exactly as a with at most 15 digits.
-    """
-    mp.nint(-0.1 * 10**15) / 10**15
-    mp.mpf('{:1.15f}'.format(0.1))
-    x = mp.linspace(self.domain[0], self.domain[-1], len(self.domain))
-
+        
 
 ################################################################################
 #             Parameters of the Basener-Sanford experiments
@@ -82,12 +124,12 @@ def accurate_respace(linspaced):
 
 # Ideal spacing of points in the intervals of birth factors and growth factors
 # Would be actual spacing if the values had exact binary representations
-N_TYPES = {
+n_classes = {
             'NoneExact' : 626,   # Sects 5.1, 5.2
             'Gaussian'  : 251,   # Sect 5.3
             'Gamma'     : 501    # Sect 5.4
         }
-N_TYPES['None'] = N_TYPES['NoneExact']
+n_classes['None'] = n_classes['NoneExact']
 
 
 # I don't include year 0 in the count of years as Basener does.
@@ -150,7 +192,15 @@ class Evolution(object):
                     self.p.annual_update()
                 self.trajectory[i] = self.p[::self.xstride]
                 self.sums[i] = np.sum(self.p[:])
-
+                
+    def set_trajectory(self, trajectory):
+        """
+        Sets trajectory and associated sums, with downsampling.
+        """
+        t_stride = self.years_per_epoch
+        self.trajectory = np.array(trajectory[::t_stride, ::self.xstride])
+        self.sums = np.sum(trajectory[::t_stride], axis=1)
+        
     def __getitem__(self, index_or_slice):
         """
         Index or slice the evolutionary trajectory.
@@ -283,13 +333,10 @@ class Population(object):
         corresponding to the eigenvalue with the greatest real part, scaled to
         unit length.
         """
-        # The eigenvectors are in columns.
         e_values, e_vectors = self.eigen()
-        j = np.argmax(e_values.real)
-        dominant = e_vectors[:, j].real
-        
-        # Scale the real part of the dominant eigenvector to unit length.
-        return dominant / math.fsum(dominant)
+        column_index = np.argmax(e_values)
+        real_vector = e_vectors[:, column_index].real
+        return real_vector / math.fsum(real_vector)
 
     def solve_for_constraints(self):
         """
@@ -351,8 +398,6 @@ class Population(object):
                         
         The default value of `P` is the frequency distribution stored by this
         `Population` instance.
-        
-        TO DO: Does this work for multiprecision float P?????????????????????????????????
         """
         if P is None:
             P = self.freqs
@@ -363,13 +408,21 @@ class Population(object):
         return var_m, np.dot(B_in - B_out, m - mean_m) / math.fsum(P)
         
             
-    def __call__(self, P, t=0):
+    def __call__(self, t, P):
         """
         Returns dP/dt of BS Equation 3.2. For use by numerical IVP solver.
         """
         rates = self.birthOf_rates(P)
         rates -= self.death_factor * P
         return rates
+    
+    def jacobian(self, t, P):
+        """
+        Returns matrix of gradients for BS Equation 3.2 Used by IVP solver.
+        """
+        J = np.multiply(self.birthing, P)
+        J[np.diag_indices(len(self))] = self.death_factor * P
+        return J
     
     def ode_solver(self, n_epochs, years_per_epoch):
         """
@@ -546,17 +599,18 @@ class Distribution(object):
             assert self.domain[self.zero_index] == 0
         else:
             self.zero_index = np.argmin(np.abs(self.domain))
-            # The warning presently seems to be nothing but an annoyance.
-            # if self.domain[self.zero_index] != 0:
-                # warnings.warn('Zero is not in the domain')
         self.p = np.zeros_like(self.domain)  # p has base type of domain
         self.p[self.zero_index] = 1
+        self.endpoints = linspace(domain[0] - delta / 2,
+                                  domain[-1] + delta / 2, n_points + 1)
         
-    def convert(self, new_basetype):
+    def convert(self, newtype):
         """
-        Convert type of internally stored probabilities.
+        Convert type of all floating-point components to `newtype`.
         """
-        self.p = convert(self.p, new_basetype)
+        self.delta = newtype(self.delta)
+        self.domain = convert(self.domain, newtype)
+        self.p = convert(self.p, newtype)
         
     def masses(self, distribution, domain, approximate=False):
         """
@@ -723,6 +777,13 @@ class Frequencies(Distribution):
         """
         self.factors = factors
         super().__init__(factors.growth, factors.delta)
+    
+    def convert(self, newtype):
+        """
+        Convert type of floating-point components to `newtype`.
+        """
+        super().convert(newtype)
+        self.factors.convert(newtype)
 
         
 
@@ -741,26 +802,36 @@ class GaussianFrequencies(Frequencies):
         script in setting the probability masses of subintervals proportional
         to the probability density at their centers.
         
-        The distribution of probability mass is normalized.
+        If the standard deviation `std` is zero, then unit probability mass is
+        associated with the fitness closest to the mean.
+        
+        The resulting discrete distribution is normalized in all cases.
         """
         super().__init__(factors)
         self.given_mean = mean
         self.given_std = std
+        z = (self.domain - mean) / std
+        
+        # Set point mass as close as possible to mean if std deviation is 0.
+        if std == 0:
+            i = np.argmin(np.abs(self.domain - mean))
+            self.p[i] = 1
+            return
+        
         if density:
-            # Gives a close match of BS's initial distribution.
-            z = (self.domain - mean) / std
-            self.p[:] = np.exp(-0.5 * z ** 2)
+            # Set probabilities to densities, just as BS do.
+            self.p[:] = exp(-0.5 * z ** 2)
         else:
             # Difference the cumulative distribution function at the endpoints
-            # of subintervals centered on equispaced growth factors, using
-            # multiprecision floating point numbers in the calculations. This
-            # is equivalent to integrating the density over each subinterval.
-            #
-            z = (mp_float(self.domain) - mean) / std  # centers of subintervals      
-            width = (z[-1] - z[0]) / (len(z) - 1)
-            endpoints = np.concatenate(([z[0] - width / 2], z + width / 2))
-            cdf = 0.5 * (1 + erf(endpoints / mp.sqrt(2))) 
-            self.p[:] = cdf[1:] - cdf[:-1]           # preserves the type of `p`
+            # of subintervals centered on equispaced growth factors. This is
+            # equivalent to integrating the density over each subinterval.
+            endpoints = self.endpoints / std
+            # TO DO: Use erfc for positive endpoints
+            cdf = 0.5 * (1 + erf(endpoints / mp.sqrt(2)))
+            # Overwriting the elements of p[:] preserves their type. That is, if
+            # the base type of p is float, the multiprecision probability masses
+            # are converted to float.
+            self.p[:] = cdf[1:] - cdf[:-1]
         self.p[np.abs(z) > crop] = 0
         self.normalize()
 
@@ -823,6 +894,13 @@ class EffectsDistribution(Distribution):
         if normed:
             self.normalize()
     
+    def convert(self, newtype):
+        """
+        Convert type of floating-point components to `newtype`.
+        """
+        super().convert(newtype)
+        self.factors.convert(newtype)
+    
     def growth_factors(self):
         return self.factors.growth
     
@@ -830,6 +908,16 @@ class EffectsDistribution(Distribution):
         return self.factors.birth
         
     def matrix(self, lossy=False):
+        n = (len(self.p) + 1) // 2
+        c = np.empty((n, n), dtype=type(self.p[0]))
+        for i in range(n):
+            c[i] = self.p[i:i+n][::-1]
+        if not lossy:
+            for j in range(n):
+                c[:, j] = c[:, j] / mp.fsum(c[:, j])
+        return c
+        
+    def Xmatrix(self, lossy=False):
         n = (len(self.p) + 1) // 2
         c = np.empty((n, n), dtype=type(self.p[0]))
         for i in range(n):
@@ -1065,10 +1153,10 @@ class Comparison(object):
         if effective:
             ax[1].set_xlabel('Effective Fitness')
         else:
-            ax[1].set_xlabel('Nominal Fitness')
+            ax[1].set_xlabel('Fitness')
         ax[1].set_yscale('log')
-        ax[1].set_ylabel('Frequency')
-        ax[0].set_ylabel('Proportion')
+        ax[1].set_ylabel('Raw Frequency')
+        ax[0].set_ylabel('Relative Frequency')
         ax[0].legend(loc='best')
         plt.interactive(is_interactive)
         
@@ -1087,114 +1175,6 @@ class Comparison(object):
                 pass
         
         def FORMER_adjust_ylim(ax, data):
-            raveled = np.ravel(data)
-            y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
-            y_lim = ax.get_ylim()
-            if not np.isinf(y_max) and not np.isnan(y_max):
-                y_max = max(y_max, y_lim[1])
-            if not np.isinf(y_min) and not np.isnan(y_min):
-                y_min = min(y_min, y_lim[0])
-            try:
-                ax.set_ylim(y_min, y_max)
-            except:
-                pass
-            
-        def initializer():
-            for n in range(2):
-                for line, x, y in zip(lines[n], g, p[n]):
-                    line.set_xdata(x[y[0] > 0])
-                    line.set_ydata(y[0][y[0] > 0])
-                    line.set_lw(1)
-            return lines.flatten()
-
-        def animator(i):
-            for n in range(2):
-                for line, x, y in zip(lines[n], g, p[n]):
-                    line.set_xdata(x[y[i] > 0])
-                    line.set_ydata(y[i][y[i] > 0])
-                    if i == 1:
-                        line.set_lw(4)
-            return lines.flatten()
-        
-        if stride is None:
-            out = fig
-        else:
-            adjust_ylim(ax[1], procs)
-            adjust_ylim(ax[0], normed)
-            out = animation.FuncAnimation(fig, animator, init_func=initializer,
-                                          frames=n_frames, interval=interval,
-                                          blit=True, repeat_delay=2000)
-            plt.close()
-        return out
-    
-    def Xanimate(self, nframes=100, duration=10000, effective=True):
-        """
-        Returns animation of evolutionary processes.
-        
-        If the number of frames, `nframes`, is 0, then a static figure is
-        returned instead of an animation. The `duration` of the animation
-        is given in milliseconds. The Boolean `effective` determines whether
-        effective growth rates (fitnesses) are displayed instead of nominal
-        fitnesses.
-        """
-        length = len(self)
-        n_years = length - 1
-        if nframes < 1:
-            stride = None
-        else:
-            nframes = min(nframes, length)
-            duration = max(duration, nframes)
-            stride = length // nframes
-            interval = round(duration / nframes)
-        labels = [str(p.p) for p in self.processes]
-        g = [p.p.growth_factors(effective) for p in self.processes]
-        procs = [p[:length] for p in self.processes]                  # Introduce stride here?
-        normed = [p.normalized(end=length) for p in self.processes]   # Need a normalization generator?
-        p = [normed[:], procs[:]]
-        n = length
-        if not stride is None:
-            for i in range(2):
-                p[i] = [np.concatenate((y[:n:stride], [y[n-1]])) for y in p[i]]  # Is contenation necessary?
-        #
-        # MOVE NORMALIZATION HERE
-        #
-        n_frames = len(p[0][0])
-        lines = np.empty((2, len(p[0])), dtype=object)
-        is_interactive = plt.isinteractive()
-        plt.interactive(False)
-        fig, ax = plt.subplots(2, sharex=True)
-        
-        # Construct lines by plotting them for the final year
-        for n in range(2):
-            for i in range(len(g)):
-                w = p[n][i][-1] > 0  # Boolean indices of support
-                lines[n][i], = ax[n].plot(g[i][w], p[n][i][-1][w],
-                                          label=labels[i], lw=4, zorder=10,
-                                          ls=self.linestyles[i],
-                                          c=self.colors[i],)
-                lines[n][i].set_animated(True)
-        for n in range(2):
-            for i in range(len(g)):
-                w = p[n][i][0] > 0
-                ax[n].plot(g[i][w], p[n][i][0][w], c='black', lw=1, alpha=0.5,
-                           zorder=11)
-                w = p[n][i][-1] > 0
-                ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
-                           lw=1, alpha=1)
-        
-        title = 'Evolution for {0} Years'.format(n_years)
-        fig.suptitle(title + self.subtitle)
-        if effective:
-            ax[1].set_xlabel('Effective Fitness')
-        else:
-            ax[1].set_xlabel('Nominal Fitness')
-        ax[1].set_yscale('log')
-        ax[1].set_ylabel('Frequency')
-        ax[0].set_ylabel('Proportion')
-        ax[0].legend(loc='upper left')
-        plt.interactive(is_interactive)
-        
-        def adjust_ylim(ax, data):
             raveled = np.ravel(data)
             y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
             y_lim = ax.get_ylim()
@@ -1442,7 +1422,7 @@ def bs_command(percentage_of_mutations_that_are_beneficial=0.001,
                mutation_distribution_type='Gaussian',
                population_size='Finite',
                number_of_years=N_YEARS['Gaussian'],
-               number_of_discrete_population_fitness_values=N_TYPES['Gaussian'],
+               number_of_discrete_population_fitness_values=n_classes['Gaussian'],
                script_path='BS.js',
                output_path='bs5_3.json'):
     """
