@@ -141,7 +141,7 @@
     \def\gt{>}
     \def\lt{<}
     % Document parameters
-    \title{Numerical study of the main theorem (sd=0.006, beneficial=1e-14)}
+    \title{Numerical study of the main theorem (sd=0.020, beneficial=1e-14)}
     
     
     
@@ -280,8 +280,8 @@
     
 
     
-    \section{Numerical Study of the Main Theorem (sd=0.006,
-beneficial=1e-14)}\label{numerical-study-of-the-main-theorem-sd0.006-beneficial1e-14}
+    \section{Numerical Study of the Main Theorem (sd=0.020,
+beneficial=1e-14)}\label{numerical-study-of-the-main-theorem-sd0.020-beneficial1e-14}
 
 \textbf{Parameters.} There are nine versions of this notebook. The only
 cell in which they differ is the following, where each of two parameters
@@ -292,7 +292,7 @@ population, and the value of "beneficial" should match that of the
 second parameter, the fraction of mutations that increase fitness.
 
     \begin{Verbatim}[commandchars=\\\{\}]
-{\color{incolor}In [{\color{incolor}1}]:} \PY{n}{standard\PYZus{}deviation\PYZus{}in\PYZus{}fitness\PYZus{}of\PYZus{}initial\PYZus{}population} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{0.006}\PY{l+s+s1}{\PYZsq{}} \PY{c+c1}{\PYZsh{} Levels: 0.006, 0.013, 0.020}
+{\color{incolor}In [{\color{incolor}1}]:} \PY{n}{standard\PYZus{}deviation\PYZus{}in\PYZus{}fitness\PYZus{}of\PYZus{}initial\PYZus{}population} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{0.020}\PY{l+s+s1}{\PYZsq{}} \PY{c+c1}{\PYZsh{} Levels: 0.006, 0.013, 0.020}
         \PY{n}{fraction\PYZus{}of\PYZus{}mutations\PYZus{}that\PYZus{}increase\PYZus{}fitness} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{1e\PYZhy{}14}\PY{l+s+s1}{\PYZsq{}}         \PY{c+c1}{\PYZsh{} Levels: 1e\PYZhy{}06, 1e\PYZhy{}10, 1e\PYZhy{}14}
         
         \PY{o}{!}\PY{n+nv}{TZ}\PY{o}{=}America/Los\PYZus{}Angeles date
@@ -300,7 +300,7 @@ second parameter, the fraction of mutations that increase fitness.
 
 
     \begin{Verbatim}[commandchars=\\\{\}]
-Fri Nov  2 03:53:38 PDT 2018
+Fri Nov  2 04:11:56 PDT 2018
 
     \end{Verbatim}
 
@@ -491,9 +491,9 @@ mantissas, in the floating-point representation of the frequencies.
 
     \begin{Verbatim}[commandchars=\\\{\}]
 Fitness of initial population
-    Mean         : -6.9827334793666859079909038749833619218383893402208e-53
-    Std deviation:  0.0060017358600102798370514449513180949180344835142829
-    Variance     :  0.000036020833333333333333333333333333333333333333333333
+    Mean         : -7.293580011919260841786183682431766807686623890893e-53
+    Std deviation:  0.020000380812456165896716463255036527047123607081067
+    Variance     :  0.00040001523264326476263976153830639837084670296905497
 
     \end{Verbatim}
 
@@ -606,9 +606,9 @@ zero according to Equation
 
     \begin{Verbatim}[commandchars=\\\{\}]
 Evaluation of Eq. 3.4 at time 0
-    Variance                      : +3.60208333333333257e-05
-    Correction                    : -9.83222891693883024e-05
-    Rate of change in mean fitness: -6.23014558360549767e-05
+    Variance                      : +4.00015232643264771e-04
+    Correction                    : -9.83222871491203163e-05
+    Rate of change in mean fitness: +3.01692945494144455e-04
 
     \end{Verbatim}
 
@@ -634,7 +634,7 @@ time interval \([0,\, x].\) We set \(x := 1/128.\)
 
 
     \begin{Verbatim}[commandchars=\\\{\}]
-Predicted change in mean fitness at time x=1/128 is -4.867301237191795e-07
+Predicted change in mean fitness at time x=1/128 is 2.3569761366730036e-06
 
     \end{Verbatim}
 
@@ -670,9 +670,9 @@ solution}\label{compare-the-prediction-to-the-observed-result-of-numerical-solut
 
     \begin{Verbatim}[commandchars=\\\{\}]
 Status report   : The solver successfully reached the end of the integration interval.
-Predicted change: -4.867301237191795e-07
-Observed change : -4.867212119590363e-07
-Relative error  : 1.8309783761642088e-05
+Predicted change: 2.3569761366730036e-06
+Observed change : 2.356952283365796e-06
+Relative error  : 1.0120403105223317e-05
 
     \end{Verbatim}
 
@@ -751,9 +751,9 @@ observations}\label{calculate-predictions-and-observations}
     \begin{Verbatim}[commandchars=\\\{\}]
 Report from initial value problem solver
     Status message        : The solver successfully reached the end of the integration interval.
-    Derivative evaluations: 7680812
-CPU times: user 27min 30s, sys: 10.3 s, total: 27min 41s
-Wall time: 13min 51s
+    Derivative evaluations: 7680020
+CPU times: user 13min 44s, sys: 2.42 s, total: 13min 46s
+Wall time: 6min 53s
 
     \end{Verbatim}
 
@@ -804,7 +804,7 @@ Wall time: 13min 51s
 
 
 \begin{Verbatim}[commandchars=\\\{\}]
-{\color{outcolor}Out[{\color{outcolor}13}]:} <matplotlib.animation.FuncAnimation at 0x7fa270127a90>
+{\color{outcolor}Out[{\color{outcolor}13}]:} <matplotlib.animation.FuncAnimation at 0x7f45000c0a20>
 \end{Verbatim}
             
     There are "damped oscillations" (for want of a better term) about the
