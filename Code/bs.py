@@ -2,7 +2,7 @@ import numpy as np
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
-import scipy.linalg as la
+import numpy.linalg as la
 import math
 import json
 import gzip
@@ -12,6 +12,7 @@ from matplotlib import animation, rc
 from mpmath import mp
 from scipy.integrate import odeint
 from scipy.integrate import solve_ivp
+from IPython.display import Image, display
 
 
 # Set the default number of digits of precision in mpmath multiprecision
@@ -72,6 +73,17 @@ class Factors(object):
     """
     Stores death, birth, and growth factors, as well as mutational effects.
     """
+    @classmethod
+    def construct(cls, min_fitness, max_fitness, bin_width=5e-4):
+        """
+        Alternative constructor.
+        """
+        basetype = type((max_fitness - min_fitness) / bin_width)
+        max_fitness = basetype(max_fitness)
+        n_classes = round((max_fitness - min_fitness) / bin_width) + 1
+        factors = Factors(n_classes, death=-min_fitness, max_growth=max_fitness)
+        return factors
+
     def __init__(self, n_classes, death=0.1, max_growth=0.15, exclude_max=False):
         """
         Set growth and birth factors, as well as mutational effects.
@@ -317,12 +329,17 @@ class Population(object):
             return self.e_values, self.e_vectors
         except:
             pass
-        # The `birthing` matrix can be huge, so we do not copy it, but instead
-        # modify it temporarily to obtain the matrix W of BS Section 4.
+        n = len(self)
         W = self.birthing
-        W[np.diag_indices(len(self))] -= self.death_factor
-        self.e_values, self.e_vectors = la.eig(W)
-        W[np.diag_indices(len(self))] += self.death_factor
+        W[np.diag_indices(n)] -= self.death_factor
+        try:
+            self.e_values, self.e_vectors = la.eig(W)
+        except:
+            A = mp.matrix(W.tolist())
+            e_values, e_vectors = mp.eig(A)
+            self.e_values = np.array(e_values)
+            self.e_vectors = np.array(e_vectors.tolist())
+        W[np.diag_indices(n)] += self.death_factor
         return self.e_values, self.e_vectors
         
     def equilibrium(self):
@@ -334,7 +351,7 @@ class Population(object):
         unit length.
         """
         e_values, e_vectors = self.eigen()
-        column_index = np.argmax(e_values)
+        column_index = np.argmax(e_values.real)
         real_vector = e_vectors[:, column_index].real
         return real_vector / math.fsum(real_vector)
 
@@ -589,6 +606,7 @@ class Distribution(object):
         
         The type of probabilities is the type of `domain` elements.
         """
+        basetype = type(domain[0])
         self.domain = domain
         self.delta = delta
         self.label = label
@@ -599,8 +617,9 @@ class Distribution(object):
             assert self.domain[self.zero_index] == 0
         else:
             self.zero_index = np.argmin(np.abs(self.domain))
-        self.p = np.zeros_like(self.domain)  # p has base type of domain
-        self.p[self.zero_index] = 1
+        self.p = np.array(self.domain)
+        self.p[:] = basetype(0)
+        self.p[self.zero_index] = basetype(1)
         self.endpoints = linspace(domain[0] - delta / 2,
                                   domain[-1] + delta / 2, n_points + 1)
         
