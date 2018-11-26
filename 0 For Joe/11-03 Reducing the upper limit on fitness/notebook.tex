@@ -141,7 +141,7 @@
     \def\gt{>}
     \def\lt{<}
     % Document parameters
-    \title{11-25 Reducing the upper limit on fitness (beneficial=1e-3)}
+    \title{11-26 Reducing the upper limit on fitness (beneficial=1e-6)}
     
     
     
@@ -280,21 +280,20 @@
     
 
     
-    \noindent  \textbf{Parameter setting.} There are two versions of this
-notebook. The only cell in which they differ is the following, where the
-parameter indicating the fraction of mutations that are beneficial is
-assigned a value of either
-\texttt{\textquotesingle{}1e-3\textquotesingle{}} or
+    \textbf{Parameter setting.} There are two versions of this notebook. The
+only cell in which they differ is the following, where the parameter
+indicating the fraction of mutations that are beneficial is assigned a
+value of either \texttt{\textquotesingle{}1e-3\textquotesingle{}} or
 \texttt{\textquotesingle{}1e-6\textquotesingle{}}.
 
     \begin{Verbatim}[commandchars=\\\{\}]
-{\color{incolor}In [{\color{incolor}1}]:} \PY{n}{fraction\PYZus{}of\PYZus{}mutations\PYZus{}that\PYZus{}are\PYZus{}beneficial} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{1e\PYZhy{}3}\PY{l+s+s1}{\PYZsq{}}
+{\color{incolor}In [{\color{incolor}1}]:} \PY{n}{fraction\PYZus{}of\PYZus{}mutations\PYZus{}that\PYZus{}are\PYZus{}beneficial} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{1e\PYZhy{}6}\PY{l+s+s1}{\PYZsq{}}
         \PY{o}{!}\PY{n+nv}{TZ}\PY{o}{=}America/Chicago date
 \end{Verbatim}
 
 
     \begin{Verbatim}[commandchars=\\\{\}]
-Sun Nov 25 02:44:07 CST 2018
+Mon Nov 26 07:55:06 CST 2018
 
     \end{Verbatim}
 
@@ -320,6 +319,7 @@ limits}\label{calculate-equilibrium-distributions-for-various-fitness-limits}
         \PY{o}{\PYZpc{}}\PY{k}{run} ../../Code/bs.py
         \PY{o}{\PYZpc{}}\PY{k}{run} \PYZhy{}i ../../Code/multiprecision\PYZus{}gamma.py
         \PY{o}{\PYZpc{}}\PY{k}{run} \PYZhy{}i ../../Code/gamma.py
+        \PY{n}{plt}\PY{o}{.}\PY{n}{interactive}\PY{p}{(}\PY{k+kc}{False}\PY{p}{)}\PY{p}{;}
 \end{Verbatim}
 
 
@@ -356,37 +356,83 @@ limits}\label{calculate-equilibrium-distributions-for-various-fitness-limits}
 distributions}\label{output-means-and-variances-of-equilibrium-distributions}
 
     \begin{Verbatim}[commandchars=\\\{\}]
-{\color{incolor}In [{\color{incolor}4}]:} \PY{k}{def} \PY{n+nf}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{,} \PY{n}{equilibria}\PY{p}{)}\PY{p}{:}
+{\color{incolor}In [{\color{incolor}4}]:} \PY{k}{def} \PY{n+nf}{means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{factors}\PY{p}{,} \PY{n}{equilibria}\PY{p}{)}\PY{p}{:}
+            \PY{n}{mv} \PY{o}{=} \PY{p}{[}\PY{n}{mean\PYZus{}and\PYZus{}variance}\PY{p}{(}\PY{n}{f}\PY{o}{.}\PY{n}{growth}\PY{p}{,} \PY{n}{eq}\PY{p}{)} 
+                     \PY{k}{for} \PY{n}{f}\PY{p}{,} \PY{n}{eq} \PY{o+ow}{in} \PY{n+nb}{zip}\PY{p}{(}\PY{n}{factors}\PY{p}{,} \PY{n}{equilibria}\PY{p}{)}\PY{p}{]}
+            \PY{n}{means} \PY{o}{=} \PY{p}{[}\PY{n}{x}\PY{p}{[}\PY{l+m+mi}{0}\PY{p}{]} \PY{k}{for} \PY{n}{x} \PY{o+ow}{in} \PY{n}{mv}\PY{p}{]}
+            \PY{n}{variances} \PY{o}{=} \PY{p}{[}\PY{n}{x}\PY{p}{[}\PY{l+m+mi}{1}\PY{p}{]} \PY{k}{for} \PY{n}{x} \PY{o+ow}{in} \PY{n}{mv}\PY{p}{]}
+            \PY{k}{return} \PY{n}{means}\PY{p}{,} \PY{n}{variances}
+        
+        \PY{k}{def} \PY{n+nf}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means}\PY{p}{,} \PY{n}{variances}\PY{p}{)}\PY{p}{:}
             \PY{n}{label} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Limit }\PY{l+s+si}{\PYZob{}0\PYZcb{}}\PY{l+s+s1}{: mean }\PY{l+s+si}{\PYZob{}1:+5.3e\PYZcb{}}\PY{l+s+s1}{ variance }\PY{l+s+si}{\PYZob{}2:5.3e\PYZcb{}}\PY{l+s+s1}{\PYZsq{}}
-            \PY{k}{for} \PY{n}{limit}\PY{p}{,} \PY{n}{f}\PY{p}{,} \PY{n}{eq} \PY{o+ow}{in} \PY{n+nb}{zip}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{,} \PY{n}{equilibria}\PY{p}{)}\PY{p}{:}
-                \PY{n}{m}\PY{p}{,} \PY{n}{v} \PY{o}{=} \PY{n}{mean\PYZus{}and\PYZus{}variance}\PY{p}{(}\PY{n}{f}\PY{o}{.}\PY{n}{growth}\PY{p}{,} \PY{n}{eq}\PY{p}{)}
+            \PY{k}{for} \PY{n}{limit}\PY{p}{,} \PY{n}{m}\PY{p}{,} \PY{n}{v} \PY{o+ow}{in} \PY{n+nb}{zip}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means}\PY{p}{,} \PY{n}{variances}\PY{p}{)}\PY{p}{:}
                 \PY{n+nb}{print}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{    }\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{label}\PY{o}{.}\PY{n}{format}\PY{p}{(}\PY{n}{limit}\PY{p}{,} \PY{n}{m}\PY{p}{,} \PY{n}{v}\PY{p}{)}\PY{p}{)}
+        
+        \PY{k}{def} \PY{n+nf}{start\PYZus{}plot}\PY{p}{(}\PY{p}{)}\PY{p}{:}
+            \PY{n}{fig}\PY{p}{,} \PY{n}{ax\PYZus{}mean} \PY{o}{=} \PY{n}{plt}\PY{o}{.}\PY{n}{subplots}\PY{p}{(}\PY{p}{)}
+            \PY{n}{ax\PYZus{}var} \PY{o}{=} \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{twinx}\PY{p}{(}\PY{p}{)}
+            \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{grid}\PY{p}{(}\PY{k+kc}{False}\PY{p}{)}
+            \PY{n}{ax\PYZus{}var}\PY{o}{.}\PY{n}{grid}\PY{p}{(}\PY{k+kc}{False}\PY{p}{)}
+            \PY{n}{fig}\PY{o}{.}\PY{n}{suptitle}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Dependence of Equilibrium Statistics on Fitness Limit}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{n}{title} \PY{o}{=} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Probability that Mutation Has Positive Effect: }\PY{l+s+s1}{\PYZsq{}}
+            \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{set\PYZus{}title}\PY{p}{(}\PY{n}{title} \PY{o}{+} \PY{n}{fraction\PYZus{}of\PYZus{}mutations\PYZus{}that\PYZus{}are\PYZus{}beneficial}\PY{p}{)}
+            \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{set\PYZus{}xlabel}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Upper Limit on Fitness}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{set\PYZus{}ylabel}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Mean Fitness at Equilibrium}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{n}{ax\PYZus{}var}\PY{o}{.}\PY{n}{set\PYZus{}ylabel}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Variance in Fitness at Equilibrium}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{k}{return} \PY{n}{fig}\PY{p}{,} \PY{n}{ax\PYZus{}mean}\PY{p}{,} \PY{n}{ax\PYZus{}var}
+        
+        \PY{k}{def} \PY{n+nf}{finish\PYZus{}plot}\PY{p}{(}\PY{n}{fig}\PY{p}{,} \PY{n}{ax\PYZus{}mean}\PY{p}{,} \PY{n}{ax\PYZus{}var}\PY{p}{)}\PY{p}{:}
+            \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{legend}\PY{p}{(}\PY{n}{title}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Mean}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{loc}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{upper left}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{n}{ax\PYZus{}var}\PY{o}{.}\PY{n}{legend}\PY{p}{(}\PY{n}{title}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Variance}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{loc}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{lower right}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+            \PY{n}{fig}\PY{o}{.}\PY{n}{tight\PYZus{}layout}\PY{p}{(}\PY{n}{rect}\PY{o}{=}\PY{p}{[}\PY{l+m+mi}{0}\PY{p}{,} \PY{l+m+mf}{0.03}\PY{p}{,} \PY{l+m+mi}{1}\PY{p}{,} \PY{l+m+mf}{0.95}\PY{p}{]}\PY{p}{)}
+            \PY{n}{filename} \PY{o}{=} \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{get\PYZus{}title}\PY{p}{(}\PY{p}{)} \PY{o}{+} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{.png}\PY{l+s+s1}{\PYZsq{}}
+            \PY{n}{fig}\PY{o}{.}\PY{n}{savefig}\PY{p}{(}\PY{n}{filename}\PY{p}{,} \PY{n+nb}{format}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{png}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{dpi}\PY{o}{=}\PY{l+m+mi}{600}\PY{p}{)}
+            \PY{n}{display}\PY{p}{(}\PY{n}{Image}\PY{p}{(}\PY{n}{filename}\PY{o}{=}\PY{n}{filename}\PY{p}{)}\PY{p}{)}
+            \PY{n}{plt}\PY{o}{.}\PY{n}{close}\PY{p}{(}\PY{p}{)}
+        
+        
+        \PY{n}{means\PYZus{}one\PYZus{}locus}\PY{p}{,} \PY{n}{vars\PYZus{}one\PYZus{}locus} \PY{o}{=} \PY{n}{means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{factors}\PY{p}{,} \PY{n}{eq\PYZus{}one\PYZus{}locus}\PY{p}{)}
+        \PY{n}{means\PYZus{}many\PYZus{}loci}\PY{p}{,} \PY{n}{vars\PYZus{}many\PYZus{}loci} \PY{o}{=} \PY{n}{means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{factors}\PY{p}{,} \PY{n}{eq\PYZus{}many\PYZus{}loci}\PY{p}{)}
             
         \PY{n+nb}{print}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{One Locus}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
-        \PY{n}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{,} \PY{n}{eq\PYZus{}one\PYZus{}locus}\PY{p}{)}
+        \PY{n}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means\PYZus{}one\PYZus{}locus}\PY{p}{,} \PY{n}{vars\PYZus{}one\PYZus{}locus}\PY{p}{)}
         \PY{n+nb}{print}\PY{p}{(}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Many Loci}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
-        \PY{n}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{,} \PY{n}{eq\PYZus{}many\PYZus{}loci}\PY{p}{)}
+        \PY{n}{print\PYZus{}means\PYZus{}and\PYZus{}variances}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means\PYZus{}many\PYZus{}loci}\PY{p}{,} \PY{n}{vars\PYZus{}many\PYZus{}loci}\PY{p}{)}
+        
+        \PY{n}{fig}\PY{p}{,} \PY{n}{ax\PYZus{}mean}\PY{p}{,} \PY{n}{ax\PYZus{}var} \PY{o}{=} \PY{n}{start\PYZus{}plot}\PY{p}{(}\PY{p}{)}
+        \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{plot}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means\PYZus{}one\PYZus{}locus}\PY{p}{,} \PY{n}{label}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{One locus}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+        \PY{n}{ax\PYZus{}mean}\PY{o}{.}\PY{n}{plot}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{means\PYZus{}many\PYZus{}loci}\PY{p}{,} \PY{n}{label}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Many loci}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
+        \PY{n}{ax\PYZus{}var}\PY{o}{.}\PY{n}{plot}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{vars\PYZus{}one\PYZus{}locus}\PY{p}{,} \PY{n}{label}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{One locus}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,}
+                    \PY{n}{marker}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{o}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{ls}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{none}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{color}\PY{o}{=}\PY{n}{sns}\PY{o}{.}\PY{n}{color\PYZus{}palette}\PY{p}{(}\PY{p}{)}\PY{p}{[}\PY{l+m+mi}{3}\PY{p}{]}\PY{p}{)}
+        \PY{n}{ax\PYZus{}var}\PY{o}{.}\PY{n}{plot}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{vars\PYZus{}many\PYZus{}loci}\PY{p}{,} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{bo}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{label}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Many loci}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,}
+                    \PY{n}{marker}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{X}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{ls}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{none}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{color}\PY{o}{=}\PY{n}{sns}\PY{o}{.}\PY{n}{color\PYZus{}palette}\PY{p}{(}\PY{p}{)}\PY{p}{[}\PY{l+m+mi}{2}\PY{p}{]}\PY{p}{)}
+        \PY{n}{finish\PYZus{}plot}\PY{p}{(}\PY{n}{fig}\PY{p}{,} \PY{n}{ax\PYZus{}mean}\PY{p}{,} \PY{n}{ax\PYZus{}var}\PY{p}{)}
 \end{Verbatim}
 
 
     \begin{Verbatim}[commandchars=\\\{\}]
 One Locus
-     Limit 0.05: mean -6.904e-03 variance 9.135e-05
-     Limit 0.06: mean -1.582e-04 variance 9.797e-05
-     Limit 0.07: mean +6.607e-03 variance 1.046e-04
-     Limit 0.08: mean +1.339e-02 variance 1.113e-04
-     Limit 0.09: mean +2.019e-02 variance 1.179e-04
-     Limit 0.10: mean +2.700e-02 variance 1.246e-04
+     Limit 0.05: mean -1.600e-02 variance 8.259e-05
+     Limit 0.06: mean -9.725e-03 variance 8.876e-05
+     Limit 0.07: mean -3.418e-03 variance 9.496e-05
+     Limit 0.08: mean +2.916e-03 variance 1.012e-04
+     Limit 0.09: mean +9.274e-03 variance 1.074e-04
+     Limit 0.10: mean +1.565e-02 variance 1.137e-04
 Many Loci
-     Limit 0.05: mean +2.904e-04 variance 9.841e-05
-     Limit 0.06: mean +7.418e-03 variance 1.054e-04
-     Limit 0.07: mean +1.456e-02 variance 1.124e-04
-     Limit 0.08: mean +2.172e-02 variance 1.194e-04
-     Limit 0.09: mean +2.890e-02 variance 1.265e-04
-     Limit 0.10: mean +3.609e-02 variance 1.335e-04
+     Limit 0.05: mean -6.699e-03 variance 9.174e-05
+     Limit 0.06: mean +3.676e-05 variance 9.836e-05
+     Limit 0.07: mean +6.798e-03 variance 1.050e-04
+     Limit 0.08: mean +1.358e-02 variance 1.117e-04
+     Limit 0.09: mean +2.039e-02 variance 1.184e-04
+     Limit 0.10: mean +2.722e-02 variance 1.251e-04
 
     \end{Verbatim}
 
+    \begin{center}
+    \adjustimage{max size={0.9\linewidth}{0.9\paperheight}}{output_7_1.png}
+    \end{center}
+    { \hspace*{\fill} \\}
+    
     \section{Plot equilibrium
 distributions}\label{plot-equilibrium-distributions}
 
@@ -412,12 +458,12 @@ distributions}\label{plot-equilibrium-distributions}
             \PY{n}{ax}\PY{o}{.}\PY{n}{legend}\PY{p}{(}\PY{n}{title}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{Limit, Variance}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{loc}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{upper left}\PY{l+s+s1}{\PYZsq{}}\PY{p}{)}
             \PY{n}{ax}\PY{o}{.}\PY{n}{set\PYZus{}ylim}\PY{p}{(}\PY{n}{ylim}\PY{p}{)}
             \PY{n}{filename} \PY{o}{=} \PY{n}{ax}\PY{o}{.}\PY{n}{get\PYZus{}title}\PY{p}{(}\PY{p}{)} \PY{o}{+} \PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{.png}\PY{l+s+s1}{\PYZsq{}}
-            \PY{n}{fig}\PY{o}{.}\PY{n}{savefig}\PY{p}{(}\PY{n}{filename}\PY{p}{,} \PY{n}{dpi}\PY{o}{=}\PY{l+m+mi}{600}\PY{p}{)}
+            \PY{n}{fig}\PY{o}{.}\PY{n}{savefig}\PY{p}{(}\PY{n}{filename}\PY{p}{,} \PY{n+nb}{format}\PY{o}{=}\PY{l+s+s1}{\PYZsq{}}\PY{l+s+s1}{png}\PY{l+s+s1}{\PYZsq{}}\PY{p}{,} \PY{n}{dpi}\PY{o}{=}\PY{l+m+mi}{600}\PY{p}{)}
             \PY{n}{display}\PY{p}{(}\PY{n}{Image}\PY{p}{(}\PY{n}{filename}\PY{o}{=}\PY{n}{filename}\PY{p}{)}\PY{p}{)}
+            \PY{n}{plt}\PY{o}{.}\PY{n}{close}\PY{p}{(}\PY{p}{)}
             \PY{k}{return} \PY{n}{fig}\PY{p}{,} \PY{n}{ax}
         
         \PY{n}{sns}\PY{o}{.}\PY{n}{set\PYZus{}palette}\PY{p}{(}\PY{n}{sns}\PY{o}{.}\PY{n}{color\PYZus{}palette}\PY{p}{(}\PY{l+s+s2}{\PYZdq{}}\PY{l+s+s2}{Set2}\PY{l+s+s2}{\PYZdq{}}\PY{p}{,} \PY{n+nb}{len}\PY{p}{(}\PY{n}{upper\PYZus{}limits}\PY{p}{)}\PY{p}{)}\PY{p}{)}
-        \PY{n}{plt}\PY{o}{.}\PY{n}{interactive}\PY{p}{(}\PY{k+kc}{False}\PY{p}{)}
         \PY{n}{fig}\PY{p}{,} \PY{n}{ax} \PY{o}{=} \PY{n}{plot\PYZus{}equilibria}\PY{p}{(}\PY{l+m+mi}{1}\PY{p}{,} \PY{n}{eq\PYZus{}one\PYZus{}locus}\PY{p}{,} \PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{)}
         \PY{n}{ylim} \PY{o}{=} \PY{n}{ax}\PY{o}{.}\PY{n}{get\PYZus{}ylim}\PY{p}{(}\PY{p}{)}
         \PY{n}{fig}\PY{p}{,} \PY{n}{ax} \PY{o}{=} \PY{n}{plot\PYZus{}equilibria}\PY{p}{(}\PY{l+m+mi}{2}\PY{o}{*}\PY{o}{*}\PY{l+m+mi}{14}\PY{p}{,} \PY{n}{eq\PYZus{}many\PYZus{}loci}\PY{p}{,} \PY{n}{upper\PYZus{}limits}\PY{p}{,} \PY{n}{factors}\PY{p}{,} \PY{n}{ylim}\PY{p}{)}
