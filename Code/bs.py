@@ -6,13 +6,15 @@ import numpy.linalg as la
 import math
 import json
 import gzip
+import bz2
 import pickle
 import warnings
 from matplotlib import animation, rc
 from mpmath import mp
+from scipy.sparse.linalg import eigs
 from scipy.integrate import odeint
 from scipy.integrate import solve_ivp
-from IPython.display import Image, display
+from IPython.display import Image, display, HTML
 
 
 # Set the default number of digits of precision in mpmath multiprecision
@@ -57,8 +59,8 @@ def exp(x):
 
 # Select type of animation.
 # HTML5 animations require FFmpeg installation with non-default settings.
-plt.rcParams['animation.html'] = 'jshtml'
-# plt.rcParams['animation.html'] = 'html5'
+# plt.rcParams['animation.html'] = 'jshtml'
+plt.rcParams['animation.html'] = 'html5'
 
 
 # Use the Seaborn package to generate plots.
@@ -342,18 +344,31 @@ class Population(object):
         W[np.diag_indices(n)] += self.death_factor
         return self.e_values, self.e_vectors
         
-    def equilibrium(self):
+    def equilibrium(self, v0=None, maxiter=None, npower=1000):
         """
         Returns the equilibrium distribution of the population over fitnesses.
         
         The equilibrium distribution is the real part of the eigenvector
-        corresponding to the eigenvalue with the greatest real part, scaled to
-        unit length.
+        corresponding to the greatest real eigenvalue, scaled to unit length.
+        
+        The initial vector `v0` and and the maximum number of iterations 
+        `maxiter` are passed under the same names to the `eigs` function of
+        scipy.sparse.linalg. In limited testing, it appears that the solution
+        returned by `eigs` can be improved slightly by subsequent application
+        of the power method for `npower` iterations.
         """
-        e_values, e_vectors = self.eigen()
-        column_index = np.argmax(e_values.real)
-        real_vector = e_vectors[:, column_index].real
-        return real_vector / math.fsum(real_vector)
+        n = len(self)
+        W = self.birthing
+        W[np.diag_indices(n)] -= self.death_factor
+        _, e_vectors = eigs(W, 1, which='LR', v0=v0, maxiter=maxiter)
+        v = e_vectors[:, 0].real
+        v /= math.fsum(v)
+        for _ in range(npower):
+            v += np.dot(W, v)
+            v /= math.fsum(v)
+        W[np.diag_indices(n)] += self.death_factor
+        return v
+        
 
     def solve_for_constraints(self):
         """
@@ -841,16 +856,16 @@ class GaussianFrequencies(Frequencies):
             # Set probabilities to densities, just as BS do.
             self.p[:] = exp(-0.5 * z ** 2)
         else:
-            # Difference the cumulative distribution function at the endpoints
-            # of subintervals centered on equispaced growth factors. This is
-            # equivalent to integrating the density over each subinterval.
-            endpoints = self.endpoints / std
-            # TO DO: Use erfc for positive endpoints
-            cdf = 0.5 * (1 + erf(endpoints / mp.sqrt(2)))
-            # Overwriting the elements of p[:] preserves their type. That is, if
-            # the base type of p is float, the multiprecision probability masses
-            # are converted to float.
-            self.p[:] = cdf[1:] - cdf[:-1]
+            # Difference the (complementary) cumulative distribution function
+            # at the endpoints of subintervals centered on equispaced
+            # fitnesses. Assignment of the result to p[:] preserves the given
+            # type of probabilities.
+            endpoints = (self.endpoints - mean) / std
+            cdf = 0.5 * erf(endpoints / mp.sqrt(2))   # omit additive constant
+            cdfc = 0.5 * erfc(endpoints / mp.sqrt(2)) # omit additive constant
+            self.p[:] = np.where(self.endpoints[:-1] < 0,
+                                 cdf[1:] - cdf[:-1],
+                                 cdfc[:-1] - cdfc[1:])
         self.p[np.abs(z) > crop] = 0
         self.normalize()
 
@@ -969,17 +984,36 @@ class EffectsDistribution(Distribution):
         self.p[x > 0] *= percent_beneficial / float(mp.fsum(self.p[x > 0][::-1]))
         self.p[x <= 0] *= (1 - percent_beneficial) / float(mp.fsum(self.p[x <= 0]))
         self.normalize()
+
+    def probability_neutral(self):
+        """
+        Returns the probability that mutation has zero effect on fitness.
+        """
+        return self.p[self.zero_index]
+    
+    def probability_deleterious(self):
+        """
+        Returns the probability that mutation has a negative effect on fitness.
+        """
+        return mp.fsum(self.p[:self.zero_index])
+
+    def probability_advantageous(self):
+        """
+        Returns the probability that mutation has a positive effect on fitness.
+        """
+        return mp.fsum(self.p[:self.zero_index:-1])
         
     def deleterious_to_advantageous(self):
         """
         Returns ratio of probabilities of deleterious and advantageous effects.
         """
-        z = self.zero_index
-        return mp.fsum(self.p[:z]) / mp.fsum(self.p[:z:-1])
+        return self.probability_deleterious() / self.probability_advantageous()
     
     def iid_effects(self, number_of_mutations=1, log_number_of_loci=0,
                           truncate_self_convolution=False):
         """
+        TO DO: One-line description.
+        
         With the default settings, the distribution is unchanged. If the number
         of mutations is zero, then the probability of zero effect is 1.
         """
@@ -1113,7 +1147,7 @@ class Comparison(object):
         return mean_variance_plots(self.processes, line_styles=line_styles,
                                    subtitle=self.subtitle)
     
-    def animate(self, nframes=100, duration=10000, effective=True):
+    def animate(self, nframes=100, duration=10000, effective=True, dpi=200):
         """
         Returns animation of evolutionary processes.
         
@@ -1138,8 +1172,10 @@ class Comparison(object):
         g = [p.growth_factors(effective) for p in self.processes]
         procs = [p[:length:stride] for p in self.processes]          # Introduce stride in views of unnormalized
         procs_last = [p[length-1:length] for p in self.processes]          # Views of last unnormalized frames
-        normed = [p.normalized(end=length, stride=stride) for p in self.processes]
-        normed_last = [p.normalized(begin=length-1, end=length) for p in self.processes]
+        normed = [p.normalized(end=length, stride=stride) 
+                      for p in self.processes]
+        normed_last = [p.normalized(begin=length-1, end=length) 
+                           for p in self.processes]
         normed = [np.concatenate((a, b)) for a, b in zip(normed, normed_last)]
         procs = [np.concatenate((a, b)) for a, b in zip(procs, procs_last)]
         p = [normed[:], procs[:]]
@@ -1147,7 +1183,14 @@ class Comparison(object):
         lines = np.empty((2, len(p[0])), dtype=object)
         is_interactive = plt.isinteractive()
         plt.interactive(False)
-        fig, ax = plt.subplots(2, sharex=True)
+        
+        # Assume that animation will be scaled down elsewhere.
+        # Set aspect ratio to 16:9, preserving default width of figures.
+        # Note that the figure size is expressed in inches, and that font
+        # sizes and and line widths are expressed in points (72 per inch).
+        
+        size = (6.4, 3.6)
+        fig, ax = plt.subplots(2, sharex=True, dpi=dpi, figsize=size)
         
         # Construct lines by plotting them for the final year
         for n in range(2):
@@ -1188,19 +1231,6 @@ class Comparison(object):
                     y_max = max(y_max, y_lim[1])
                 if not np.isinf(y_min) and not np.isnan(y_min):
                     y_min = min(y_min, y_lim[0])
-            try:
-                ax.set_ylim(y_min, y_max)
-            except:
-                pass
-        
-        def FORMER_adjust_ylim(ax, data):
-            raveled = np.ravel(data)
-            y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
-            y_lim = ax.get_ylim()
-            if not np.isinf(y_max) and not np.isnan(y_max):
-                y_max = max(y_max, y_lim[1])
-            if not np.isinf(y_min) and not np.isnan(y_min):
-                y_min = min(y_min, y_lim[0])
             try:
                 ax.set_ylim(y_min, y_max)
             except:
@@ -1281,6 +1311,14 @@ def mean_variance_plots(evs, labels=None, line_styles=None, subtitle=''):
 ################################################################################
 #                              Utility functions
 ################################################################################
+
+
+def save_and_display(figure, filename, format='png', dpi=600):
+    """
+    Displays figure after saving it with the given attributes.
+    """
+    figure.savefig(filename, format=format, dpi=dpi)
+    display(Image(filename=filename))
 
 
 def convert(iterable, new_basetype):
