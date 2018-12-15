@@ -661,10 +661,43 @@ class Distribution(object):
                         distribution.sf(lower) - distribution.sf(upper),
                         distribution.cdf(upper) - distribution.cdf(lower))
         
-    def gaussian(self, mean, std, approximate=False):
-        self.rv = stats.norm(mean, std)
-        self.p[:] = self.masses(self.rv, self.domain, approximate)
+    def gaussian(self, mean, std, density=False):
+        """
+        Set distribution to discretized Gaussian.
+        
+        The result is not necessarily normalized. If the standard deviation
+        `std` is zero, then unit mass is associated with the domain point
+        closest to the given `mean`.
+        
+        Calculations are done in multiprecision floating point. The base type
+        of the distribution is preserved. If the base type is ordinary float,
+        then it may be that small probabilities are rounded to zero.
+        """
+        if std == 0:
+            i = np.argmin(np.abs(self.domain - mean))
+            self.p[i] = 1
+            return
+        
+        # Define standard-normal probability density function.
+        def pdf(z):
+            return exp(-0.5 * z ** 2)
+        
+        if density:
+            # Follow BS in setting probabilities proportional to densities
+            # at domain points.
+            self.p[:] = pdf((self.domain - mean) / std) * self.delta
+        else:
+            # Obtain probabilities by numerical integration over subintervals
+            # centered on equispaced points in domain. Work with double the
+            # precision `mp.dps` to obtain `mp.dps` accurate digits in the
+            # integration result.
+            endpoints = (self.endpoints - mean) / std
+            with mp.workdps(2 * mp.dps):
+                for i in range(len(self.p)):
+                    self.p[i] = mp.quad(pdf, [endpoints[i], endpoints[i+1]])
+                    
         if self.zero_centered and mean == 0:
+            # Make the distribution perfectly symmetric.
             self.p[:] = (self.p + self.p[::-1]) / 2
     
     def symmetrized_gamma(self, alpha, beta, approximate=False):
@@ -844,29 +877,10 @@ class GaussianFrequencies(Frequencies):
         super().__init__(factors)
         self.given_mean = mean
         self.given_std = std
-        z = (self.domain - mean) / std
-        
-        # Set point mass as close as possible to mean if std deviation is 0.
-        if std == 0:
-            i = np.argmin(np.abs(self.domain - mean))
-            self.p[i] = 1
-            return
-        
-        if density:
-            # Set probabilities to densities, just as BS do.
-            self.p[:] = exp(-0.5 * z ** 2)
-        else:
-            # Difference the (complementary) cumulative distribution function
-            # at the endpoints of subintervals centered on equispaced
-            # fitnesses. Assignment of the result to p[:] preserves the given
-            # type of probabilities.
-            endpoints = (self.endpoints - mean) / std
-            cdf = 0.5 * erf(endpoints / mp.sqrt(2))   # omit additive constant
-            cdfc = 0.5 * erfc(endpoints / mp.sqrt(2)) # omit additive constant
-            self.p[:] = np.where(self.endpoints[:-1] < 0,
-                                 cdf[1:] - cdf[:-1],
-                                 cdfc[:-1] - cdfc[1:])
-        self.p[np.abs(z) > crop] = 0
+        self.gaussian(mean, std, density)
+        if std > 0 and crop < np.inf:
+            z = (self.domain - mean) / std
+            self.p[np.abs(z) > crop] = 0
         self.normalize()
 
 
@@ -950,18 +964,6 @@ class EffectsDistribution(Distribution):
             for j in range(n):
                 c[:, j] = c[:, j] / mp.fsum(c[:, j])
         return c
-        
-    def Xmatrix(self, lossy=False):
-        n = (len(self.p) + 1) // 2
-        c = np.empty((n, n), dtype=type(self.p[0]))
-        for i in range(n):
-            c[i] = self.p[i:i+n][::-1]
-        if not lossy:
-            for i in range(1, n):
-                c[0, :i] += self.p[:i][::-1]
-            for i in range(n-1, 0, -1):
-                c[-1, -i:] += self.p[-i:][::-1]
-        return c
     
     def gimmick(self):
         """
@@ -1007,7 +1009,10 @@ class EffectsDistribution(Distribution):
         """
         Returns ratio of probabilities of deleterious and advantageous effects.
         """
-        return self.probability_deleterious() / self.probability_advantageous()
+        advantageous = self.probability_advantageous()
+        if advantageous > 0.0:
+            return self.probability_deleterious() / advantageous
+        return np.inf
     
     def iid_effects(self, number_of_mutations=1, log_number_of_loci=0,
                           truncate_self_convolution=False):
