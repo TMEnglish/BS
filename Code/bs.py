@@ -1212,7 +1212,7 @@ class Comparison(object):
                            zorder=11)
                 w = p[n][i][-1] > 0
                 ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
-                           lw=1, alpha=1)
+                           lw=1, alpha=1, ls=lines[n][i].get_ls())
         
         title = 'Evolution for {0} Years'.format(n_years)
         fig.suptitle(title)
@@ -1318,6 +1318,18 @@ def mean_variance_plots(evs, labels=None, line_styles=None, subtitle=''):
 ################################################################################
 
 
+def ivp_solution(derivative, initial_frequencies, times, max_step=1/128):
+    """
+    Use the Runge-Kutta 4(5) method to solve for frequencies at specified
+    `times`, given the frequencies at the first of those times.
+    """
+    interval = (times[0], times[-1] + max_step)
+    result = solve_ivp(derivative, interval, initial_frequencies,
+                       method='RK45', t_eval=times, max_step=max_step,
+                       rtol=1e-13, atol=1e-11)
+    return result.y.T, result
+
+
 def save_and_display(figure, filename, format='png', dpi=600):
     """
     Displays figure after saving it with the given attributes.
@@ -1325,7 +1337,32 @@ def save_and_display(figure, filename, format='png', dpi=600):
     figure.savefig(filename, format=format, dpi=dpi)
     display(Image(filename=filename))
 
+    
+def save_video(anim, filename, fps=None):
+    """
+    Write animation `anim` to file, setting frames per second as specified.
+    
+    Tested only for `filename` with extension `.mp4`.
+    """
+    if fps is None:
+        fps = round(1000/anim._interval)
+    Writer = animation.writers['ffmpeg']
+    writer = Writer(fps=fps)
+    anim.save(filename, writer)
 
+def display_video(filename):
+    html = """
+           <video width="100%" controls autoplay loop>
+               <source src="{0}" type="video/mp4">
+           </video>
+           """.format(filename)
+    display(HTML(html))
+
+def save_and_display_video(anim, filename, fps=None):
+    save_video(anim, filename, fps)
+    display_video(filename)
+
+    
 def convert(iterable, new_basetype):
     """
     Returns Numpy array with objects in iterable converted to new type.
