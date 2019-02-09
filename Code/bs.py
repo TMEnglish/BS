@@ -76,15 +76,14 @@ class Factors(object):
     Stores death, birth, and growth factors, as well as mutational effects.
     """
     @classmethod
-    def construct(cls, min_fitness, max_fitness, bin_width=5e-4):
+    def construct(cls, min_fitness=-0.1, max_fitness=0.1, bin_width=5e-4):
         """
         Alternative constructor.
         """
         basetype = type((max_fitness - min_fitness) / bin_width)
         max_fitness = basetype(max_fitness)
         n_classes = round((max_fitness - min_fitness) / bin_width) + 1
-        factors = Factors(n_classes, death=-min_fitness, max_growth=max_fitness)
-        return factors
+        return Factors(n_classes, death=-min_fitness, max_growth=max_fitness)
 
     def __init__(self, n_classes, death=0.1, max_growth=0.15, exclude_max=False):
         """
@@ -477,6 +476,9 @@ class Population(object):
         return solution[1::stride], self.log_scalar
             
     def update(self):
+        """
+        Update frequencies for one time step.
+        """
         births = self.birthOf_rates(self.freqs)
         self.freqs *= 1 - self.death_factor
         self.freqs += births
@@ -486,7 +488,8 @@ class Population(object):
         Use Euler's method to solve for the next year's frequencies.
         """
         if self.continuous:
-            zeroed = self.freqs == 0
+            zeroed = self.freqs <= self.threshold * self.norm(self.freqs)
+            self.freqs[zeroed] = self.zero
         for _ in range(self.updates_per_year):
             self.update()
             if not self.norm is None:
@@ -1152,7 +1155,7 @@ class Comparison(object):
         return mean_variance_plots(self.processes, line_styles=line_styles,
                                    subtitle=self.subtitle)
     
-    def animate(self, nframes=100, duration=10000, effective=True, dpi=200):
+    def animate(self, nframes=100, duration=10000, effective=False, dpi=600):
         """
         Returns animation of evolutionary processes.
         
@@ -1222,7 +1225,7 @@ class Comparison(object):
         else:
             ax[1].set_xlabel('Fitness')
         ax[1].set_yscale('log')
-        ax[1].set_ylabel('Raw Frequency')
+        ax[1].set_ylabel('Scaled Frequency')
         ax[0].set_ylabel('Relative Frequency')
         ax[0].legend(loc='best')
         plt.interactive(is_interactive)
