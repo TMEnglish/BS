@@ -1155,9 +1155,9 @@ class Comparison(object):
         return mean_variance_plots(self.processes, line_styles=line_styles,
                                    subtitle=self.subtitle)
     
-    def animate(self, nframes=100, duration=10000, effective=False, dpi=600):
+    def Xanimate(self, nframes=100, duration=10000, effective=False, dpi=600):
         """
-        Returns animation of evolutionary processes.
+        OBSOLETE: Returns animation of evolutionary processes.
         
         If the number of frames, `nframes`, is 0, then a static figure is
         returned instead of an animation. The `duration` of the animation
@@ -1216,6 +1216,130 @@ class Comparison(object):
                 w = p[n][i][-1] > 0
                 ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
                            lw=1, alpha=1, ls=lines[n][i].get_ls())
+        
+        title = 'Evolution for {0} Years'.format(n_years)
+        fig.suptitle(title)
+        ax[0].set_title(self.subtitle)
+        if effective:
+            ax[1].set_xlabel('Effective Fitness')
+        else:
+            ax[1].set_xlabel('Fitness')
+        ax[1].set_yscale('log')
+        ax[1].set_ylabel('Scaled Frequency')
+        ax[0].set_ylabel('Relative Frequency')
+        ax[0].legend(loc='best')
+        plt.interactive(is_interactive)
+        
+        def adjust_ylim(ax, data):
+            for d in data:
+                raveled = np.ravel(d)
+                y_min, y_max = min_and_max(raveled[np.nonzero(raveled)])
+                y_lim = ax.get_ylim()
+                if not np.isinf(y_max) and not np.isnan(y_max):
+                    y_max = max(y_max, y_lim[1])
+                if not np.isinf(y_min) and not np.isnan(y_min):
+                    y_min = min(y_min, y_lim[0])
+            try:
+                ax.set_ylim(y_min, y_max)
+            except:
+                pass
+            
+        def initializer():
+            for n in range(2):
+                for line, x, y in zip(lines[n], g, p[n]):
+                    line.set_xdata(x[y[0] > 0])
+                    line.set_ydata(y[0][y[0] > 0])
+                    line.set_lw(1)
+            return lines.flatten()
+
+        def animator(i):
+            for n in range(2):
+                for line, x, y in zip(lines[n], g, p[n]):
+                    line.set_xdata(x[y[i] > 0])
+                    line.set_ydata(y[i][y[i] > 0])
+                    if i == 1:
+                        line.set_lw(4)
+            return lines.flatten()
+        
+        if stride is None:
+            out = fig
+        else:
+            adjust_ylim(ax[1], procs)
+            adjust_ylim(ax[0], normed)
+            out = animation.FuncAnimation(fig, animator, init_func=initializer,
+                                          frames=n_frames, interval=interval,
+                                          blit=True, repeat_delay=2000)
+            plt.close()
+        return out
+    
+    def animate(self, nframes=100, duration=10000, effective=False, dpi=600):
+        """
+        Returns animation of evolutionary processes.
+        
+        If the number of frames, `nframes`, is 0, then a static figure is
+        returned instead of an animation. The `duration` of the animation
+        is given in milliseconds. The Boolean `effective` determines whether
+        effective growth rates (fitnesses) are displayed instead of nominal
+        fitnesses.
+        """
+        length = len(self)
+        n_years = length - 1
+        if nframes < 1:
+            stride = None
+        else:
+            nframes = min(nframes, length)
+            duration = max(duration, nframes)
+            stride = length // nframes
+            interval = round(duration / nframes)
+        labels = [str(p.p) for p in self.processes]
+        
+        # Each process has its own growth factors
+        g = [p.growth_factors(effective) for p in self.processes]
+        # Introduce stride in views of unnormalized
+        procs = [p[:length:stride] for p in self.processes] 
+        # Views of last unnormalized frames
+        procs_last = [p[length-1:length] for p in self.processes]
+        normed = [p.normalized(end=length, stride=stride) 
+                      for p in self.processes]
+        normed_last = [p.normalized(begin=length-1, end=length) 
+                           for p in self.processes]
+        normed = [np.concatenate((a, b)) for a, b in zip(normed, normed_last)]
+        procs = [np.concatenate((a, b)) for a, b in zip(procs, procs_last)]
+        p = [normed[:], procs[:]]
+        n_frames = len(p[0][0])
+        lines = np.empty((2, len(p[0])), dtype=object)
+        is_interactive = plt.isinteractive()
+        plt.interactive(False)
+        
+        # Assume that animation will be scaled down elsewhere.
+        # Set aspect ratio to 16:9, preserving default width of figures.
+        # Note that the figure size is expressed in inches, and that font
+        # sizes and and line widths are expressed in points (72 per inch).
+        
+        size = (6.4, 3.6)
+        fig, ax = plt.subplots(2, sharex=True, dpi=dpi, figsize=size)
+        
+        # Construct lines by plotting them for the INITIAL time
+        for n in range(2):
+            for i in range(len(g)):
+                w = p[n][i][0] > 0  # Boolean indices of support
+                lines[n][i], = ax[n].plot(g[i][w], p[n][i][0][w],
+                                          label=labels[i], lw=4, zorder=10,
+                                          ls=self.linestyles[i],
+                                          c=self.colors[i],)
+        
+        # Plot thin black lines for initial distributions
+        # Plot transparent lines for final distributions. This is a trick to
+        # get good legend placement.
+        for n in range(2):
+            for i in range(len(g)):
+                w = p[n][i][0] > 0
+                ax[n].plot(g[i][w], p[n][i][0][w], c='black', lw=1, alpha=0.5,
+                           zorder=11)
+                w = p[n][i][-1] > 0
+                ax[n].plot(g[i][w], p[n][i][-1][w], c=lines[n][i].get_c(),
+                           lw=1, alpha=0, ls=lines[n][i].get_ls())
+        
         
         title = 'Evolution for {0} Years'.format(n_years)
         fig.suptitle(title)
