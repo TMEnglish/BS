@@ -288,24 +288,24 @@ class BS_Evolution(Evolution):
 
         
 class Population(object):
-    def __init__(self, initial_freqs, mutations, updates_per_year=1,
-                       norm=None, threshold=1e-9, continuous=False, lossy=False,
-                       label='', matrix=False, bias=0):
-        if continuous and norm is None:
-            raise Exception('Must set `norm` for continuous thresholding')
+    def __init__(self, initial_freqs, mutations, steps_per_year=1,
+                       norm=None, threshold=1e-9, zero_forever=False,
+                       lossy=False, label='', matrix=True, bias=0):
+        if zero_forever and norm is None:
+            raise Exception('Must set `norm` for `zero_forever` condition')
         self.initial_freqs = initial_freqs
         self.freqs = np.array(initial_freqs)
         self.births = np.empty_like(self.freqs)
         self.annual_factors = initial_freqs.factors
-        self.death_factor = (self.annual_factors.death + bias) / updates_per_year
-        self.birth_factors = (self.annual_factors.birth + bias) / updates_per_year
-        self.updates_per_year = updates_per_year
+        self.death_factor = (self.annual_factors.death + bias) / steps_per_year
+        self.birth_factors = (self.annual_factors.birth + bias) / steps_per_year
+        self.steps_per_year = steps_per_year
         self.mutations = mutations
         if matrix:
             self.birthing = mutations.matrix(lossy) * self.birth_factors
             m = [mp.log(mp.fsum(col) + 1 - self.death_factor)
                      for col in self.birthing.T]
-            self.effective_growth = np.multiply(m, self.updates_per_year)
+            self.effective_growth = np.multiply(m, self.steps_per_year)
             self.effective_birth = self.effective_growth - self.effective_growth[0]
         else:
             """HACK HACK HACK"""
@@ -314,7 +314,7 @@ class Population(object):
             """HACK HACK HACK"""
         self.norm = norm
         self.threshold = threshold
-        self.continuous = continuous
+        self.zero_forever = zero_forever
         self.lossy = lossy
         self.label = label
         self.zero = self.freqs[0] * 0
@@ -467,12 +467,12 @@ class Population(object):
         log_scalar = 512 - round(np.log2(max(self.freqs)))
         self.log_scalar += log_scalar
         self.freqs[:] *= 2 ** log_scalar
-        # The time unit is 1 /`updates_per_year`
-        duration = n_epochs * years_per_epoch * self.updates_per_year
+        # The time unit is 1 /`steps_per_year`
+        duration = n_epochs * years_per_epoch * self.steps_per_year
         times = np.linspace(0, duration, duration + 1)
         solution = odeint(self, self.freqs, times, rtol=1e-13, atol=1e-11)
         self.freqs[:] = solution[-1]
-        stride = years_per_epoch* self.updates_per_year
+        stride = years_per_epoch* self.steps_per_year
         return solution[1::stride], self.log_scalar
             
     def update(self):
@@ -487,14 +487,14 @@ class Population(object):
         """
         Use Euler's method to solve for the next year's frequencies.
         """
-        if self.continuous:
+        if self.zero_forever:
             zeroed = self.freqs <= self.threshold * self.norm(self.freqs)
             self.freqs[zeroed] = self.zero
-        for _ in range(self.updates_per_year):
+        for _ in range(self.steps_per_year):
             self.update()
             if not self.norm is None:
                 small = self.freqs <= self.threshold * self.norm(self.freqs)
-                if self.continuous:
+                if self.zero_forever:
                     np.logical_or(small, zeroed, out=zeroed)
                     self.freqs[zeroed] = self.zero
                 else:
@@ -595,7 +595,7 @@ class BS_Population(Population):
         self.births = np.empty_like(self.freqs)
         self.annual_factors = Factors(bs['numIncrements'])
         self.death_factor = self.annual_factors.death
-        self.updates_per_year = 1
+        self.steps_per_year = 1
         self.birthing = bs['MP']
         self.norm = np.max
         self.lossy = True
@@ -1369,11 +1369,13 @@ class Comparison(object):
                 pass
             
         def initializer():
+            """
             for n in range(2):
                 for line, x, y in zip(lines[n], g, p[n]):
                     line.set_xdata(x[y[0] > 0])
                     line.set_ydata(y[0][y[0] > 0])
                     line.set_lw(1)
+            """
             return lines.flatten()
 
         def animator(i):
@@ -1381,8 +1383,10 @@ class Comparison(object):
                 for line, x, y in zip(lines[n], g, p[n]):
                     line.set_xdata(x[y[i] > 0])
                     line.set_ydata(y[i][y[i] > 0])
+                    """
                     if i == 1:
                         line.set_lw(4)
+                    """
             return lines.flatten()
         
         if stride is None:
