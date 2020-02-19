@@ -229,7 +229,7 @@ function runSimulation() {
             
             var births = jStat.dot(Psolution[t-1], MP[i]);
             Psolution[t][i] = births + (1 - deathRate) * Psolution[t - 1][i];
-            
+           
             if (mt == "NoneExact") 
                 Psolution[t][i] = Psolution[0][i] * Math.exp(t * m[i]);
             s = s + Psolution[t][i];

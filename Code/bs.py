@@ -1,8 +1,9 @@
 import numpy as np
+import numpy.linalg as la
+import numpy.random as rand
 import scipy.stats as stats
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy.linalg as la
 import math
 import json
 import gzip
@@ -19,7 +20,8 @@ from IPython.display import Image, display, HTML
 
 # Set the default number of digits of precision in mpmath multiprecision
 # operations.
-mp.dps = 50
+mp.dps = 60
+
 
 # Make some mpmath functions into quasi-ufuncs taking either scalar or
 # array arguments.
@@ -55,7 +57,27 @@ def exp(x):
     except:
         return mp_exp(x)
 
+    
+# Generalized fsum and frexp work with float and multiprecision float.
 
+def fsum(a):
+    """
+    Return either mp.fsum(a) or math.fsum(a), depending on type of `a`.
+    """
+    if type(a[0]) is mp.mpf:
+        return mp.fsum(a)
+    else:
+        return math.fsum(a)
+
+def frexp(x):
+    """
+    Return either mp.frexp(x) or math.frexp(x), depending on type of `x`.
+    """
+    if type(x) is mp.mpf:
+        return mp.frexp(x)
+    else:
+        return math.frexp(x)
+    
 
 # Select type of animation.
 # HTML5 animations require FFmpeg installation with non-default settings.
@@ -70,9 +92,10 @@ sns.set_style("darkgrid", {"axes.facecolor": ".92"})
 sns.set_palette(sns.color_palette("Set2", 4))
 
 
-
 class Factors(object):
     """
+    REPLACED by class Rates. Perhaps useful in replication of BS results.
+    
     Stores death, birth, and growth factors, as well as mutational effects.
     """
     @classmethod
@@ -131,12 +154,10 @@ class Factors(object):
 
         
 
-################################################################################
+########################################################################
 #             Parameters of the Basener-Sanford experiments
-################################################################################
+########################################################################
 
-# Ideal spacing of points in the intervals of birth factors and growth factors
-# Would be actual spacing if the values had exact binary representations
 n_classes = {
             'NoneExact' : 626,   # Sects 5.1, 5.2
             'Gaussian'  : 251,   # Sect 5.3
@@ -155,21 +176,75 @@ N_YEARS['None'] = N_YEARS['NoneExact']
 
 
 
-################################################################################
+########################################################################
+#                     Class for matrix of derivatives
+########################################################################
+
+
+class Derivative(object):
+    
+    def __init__(self, factors, mutation_probs, norm=True):
+        self.factors = factors
+        n = len(factors.growth)
+        self.W = np.empty((n, n), dtype=type(factors.birth[0]))
+        cols = [mutation_probs[j:j+n] for j in range(n)][::-1]
+        sums = [math.fsum(col) for col in cols]
+        for j in range(n):
+            if norm:
+                self.W[:, j] = factors.birth[j] / sums[j] * cols[j]
+            else:
+                self.W[:, j] = factors.birth[j] * cols[j]
+            self.W[j, j] -= factors.death
+    
+    def __call__(self, ignored_time, state):
+        """
+        Returns vector of derivatives; for use by ODE solvers.
+        """
+        return np.dot(self.W, state)
+        
+
+class AltDerivative(object):
+    
+    def __init__(self, factors, mutation_probs, norm=True):
+        self.factors = factors
+        n = len(factors.growth)
+        self.W = np.empty((n, n), dtype=type(factors.birth[0]))
+        cols = [mutation_probs[j:j+n] for j in range(n)]
+        sums = [math.fsum(col) for col in cols]
+        for j in range(n):
+            if norm:
+                self.W[:, j] = factors.birth[j] / sums[j] * cols[j]
+            else:
+                self.W[:, j] = factors.birth[j] * cols[j]
+            self.W[j, j] -= factors.death
+        self.cols = cols
+        self.sums = sums
+    
+    def __call__(self, ignored_time, state):
+        """
+        Returns vector of derivatives; for use by ODE solvers.
+        """
+        return np.dot(self.W, state)
+        
+
+
+
+########################################################################
 #          Classes for populations and evolutionary trajectories
-################################################################################
+########################################################################
 
 class Evolution(object):
     """
     Record the evolution of a Population instance.
     
-    The n-th element of the evolutionary trajectory gives the frequencies of
-    fitnesses (alternatively, growth factors) in the population after n epochs.
+    The n-th element of the evolutionary trajectory gives the frequencies
+    of fitnesses (alternatively, growth factors) in the population after
+    n epochs.
     """
-    def __init__(self, population, n_epochs=0, years_per_epoch=1, x_stride=1,
-                       use_ode_solver=False):
+    def __init__(self, population, n_epochs=0, years_per_epoch=1,
+                 x_stride=1, use_ode_solver=False):
         """
-        Records the trajectory of `population` over `n_epochs` of evolution.
+        Records trajectory of `population` over `n_epochs` of evolution.
         """
         if use_ode_solver and not population.norm is None:
             raise Exception('Cannot use ODE solver when thresholding')
@@ -183,7 +258,7 @@ class Evolution(object):
    
     def __call__(self, n_epochs=1):
         """
-        Extends the evolutionary trajectory by the given number of epochs.
+        Extends evolutionary trajectory by the given number of epochs.
         """
         if n_epochs < 1:
             return
@@ -533,13 +608,13 @@ class Population(object):
         """
         Returns an accurate sum of the frequencies.
         """
-        return accurate_sum(self.freqs)
+        return mp.fsum(self.freqs)
     
     def normalize(self):
         """
         Divides the frequencies by their sum.
         """
-        self.freqs[:] = self.freqs / accurate_sum(self.freqs)
+        self.freqs[:] = self.freqs / mp.fsum(self.freqs)
     
     def shift(self, n):
         """
@@ -604,9 +679,9 @@ class BS_Population(Population):
 
 
 
-################################################################################
+########################################################################
 #                  Base class for discrete distributions
-################################################################################
+########################################################################
 
 
 class Distribution(object):
@@ -690,14 +765,13 @@ class Distribution(object):
             # at domain points.
             self.p[:] = pdf((self.domain - mean) / std) * self.delta
         else:
-            # Obtain probabilities by numerical integration over subintervals
-            # centered on equispaced points in domain. Work with double the
-            # precision `mp.dps` to obtain `mp.dps` accurate digits in the
-            # integration result.
-            endpoints = (self.endpoints - mean) / std
+            # Difference the cumulative distribution function at endpoints
+            # of subintervals centered on equispaced points in domain. Work
+            # with double the precision `mp.dps`.
             with mp.workdps(2 * mp.dps):
-                for i in range(len(self.p)):
-                    self.p[i] = mp.quad(pdf, [endpoints[i], endpoints[i+1]])
+                args = (self.endpoints - mp.mpf(mean)) / (std * mp.sqrt(2))
+                cdf = 0.5 * (1 + erf(args))
+                self.p[:] = cdf[1:] - cdf[:-1]
                     
         if self.zero_centered and mean == 0:
             # Make the distribution perfectly symmetric.
@@ -828,9 +902,9 @@ class Distribution(object):
 
 
 
-################################################################################
+########################################################################
 #          Initial distributions of the population over growth factors
-################################################################################
+########################################################################
 
 
 class Frequencies(Distribution):
@@ -887,9 +961,9 @@ class GaussianFrequencies(Frequencies):
         self.normalize()
 
 
-################################################################################
+########################################################################
 #          Distributions of births over mutation effects on growth rate
-################################################################################
+########################################################################
 
 
 class EffectsDistribution(Distribution):
@@ -1079,9 +1153,9 @@ class EffectsDistribution(Distribution):
 
 
 
-################################################################################
+########################################################################
 #                            Plots and animations
-################################################################################
+########################################################################
 
 
 class Comparison(object):
@@ -1444,9 +1518,9 @@ def mean_variance_plots(evs, labels=None, line_styles=None, subtitle=''):
 
 
 
-################################################################################
+########################################################################
 #                              Utility functions
-################################################################################
+########################################################################
 
 
 def ivp_solution(derivative, initial_frequencies, times, max_step=1/128):
@@ -1461,12 +1535,16 @@ def ivp_solution(derivative, initial_frequencies, times, max_step=1/128):
     return result.y.T, result
 
 
-def save_and_display(figure, filename, format='png', dpi=600):
+def save_and_display(figure, filename, format='png', dpi=600, close=True):
     """
     Displays figure after saving it with the given attributes.
+    
+    If `close` is true, then the plot of the figure is closed.
     """
     figure.savefig(filename, format=format, dpi=dpi)
     display(Image(filename=filename))
+    if close:
+        plt.close(figure)
 
     
 def save_video(anim, filename, fps=None):
@@ -1501,37 +1579,43 @@ def convert(iterable, new_basetype):
     return np.array([new_basetype(x) for x in iterable])
 
 
-def accurate_sum(a, dps=mp.dps):
+def accurate_sum(a):
     """
     Returns sum of elements in array `a` as multiprecision float.
     """
-    with mp.workdps(dps):
-        i = np.argsort(np.abs(a))
-        return mp.fsum(a[i])
+    return mp.fsum(a)
 
 
-def moment(frequency, x, n, dps=mp.dps):
+def moment(frequency, x, n):
     """
     Returns n-th raw moment as multiprecision float.
     """
-    with mp.workdps(dps):
-        x = convert(x, mp.mpf) ** n
-        f = convert(frequency, mp.mpf)
-        return accurate_sum(np.multiply(f, x), dps) / accurate_sum(f, dps)
+    x = mp_float(x)
+    x **= n
+    return mp.fsum(np.multiply(frequency, x)) / mp.fsum(frequency)
 
 
-def accurate_mean(frequency, x, dps=mp.dps):
+def mean(frequency, x):
     """
-    Returns mean value of x as multiprecision float.
+    Returns mean for `frequency` distribution over `x`.
+    
+    Sums are calculated accurately using `fsum`.
     """
-    return moment(frequency, x, 1, dps)
+    return fsum(frequency * x) / fsum(frequency)
 
 
-def accurate_variance(frequency, x, dps=mp.dps):
+def mean_var(frequency, x):
     """
-    Returns variance of x as multiprecision float.
+    Returns mean and variance for `frequency` distribution over `x`.
+    
+    Sums are calculated accurately using `fsum`.
     """
-    return moment(frequency, x, 2, dps) - moment(frequency, x, 1, dps) ** 2
+    norm = fsum(frequency)
+    mom1 = fsum(frequency * x) 
+    mom2 = fsum(frequency * x**2)
+    var = (mom2 - mom1**2 / norm) / norm
+    mean = mom1 / norm
+    return mean, var
 
    
 def mean_and_variance(x, p):
@@ -1546,6 +1630,18 @@ def mean_and_variance(x, p):
     variance -= np.square(mean)
     return mean, variance
 
+
+def regress_through_origin(x, y):
+    """
+    Return slope obtained by regression through the origin.
+    """
+    sum_x = fsum(x)
+    sum_y = fsum(y)
+    n = len(x)
+    cov = fsum(x * y) - sum_x * sum_y / n
+    var = fsum(x * x) - sum_x * sum_x / n
+    return cov / var 
+    
 
 def relative_error(actual, desired, absolute=False):
     """
@@ -1572,80 +1668,168 @@ def min_and_max(a):
 
 def slice_to_support(p):
     """
-    Returns slice excluding zeros, if any, in the tails of distribution p.
+    Returns slice excluding zeros in the tails of distribution p.
     """
     positive = p > 0
     a = np.argmax(positive)
     b = len(positive) - np.argmax(positive[::-1])
     return slice(a, b, None)
+
+
+def normal_pdf(x, mean='0', std='1'):
+    """
+    Returns result of multiprecision calculation of Gaussian density.
+    """
+    x = mp_float(x)
+    return exp(-0.5 * ((x - mp_float(mean)) / mp_float(std)) ** 2)
+
+
+def normal_cdf(x, mean='0', std='1'):
+    """
+    Returns result of multiprecision calculation of Gaussian CDF.
+    
+    The argument `x` may be an array.
+    """
+    x = mp_float(x)
+    arg = (x - mp_float(mean)) / (mp_float(std) * 2)
+    return 0.5 * (1 + erf(arg))
+
+
+def normal_ccdf(x, mean='0', std='1'):
+    """
+    Returns Gaussian complementary CDF value as multiprecision float.
+    
+    The argument `x` may be an array.
+    """
+    x = mp_float(x)
+    arg = (x - mp_float(mean)) / (mp_float(std) * 2)
+    return 0.5 * erfc(arg)
+
+
+def binned_normal(bin_walls, mean='0', std='1', normed=True):
+    """
+    Returns normal masses for bins with given `bin_walls`.
+    
+    The probability masses are multiprecision floating point numbers.
+    """
+    # Calculate bin masses by differencing the CDF.
+    cdf = normal_cdf(bin_walls, mean, std)
+    per_cdf = cdf[1:] - cdf[:-1]
+    #
+    # Calculate bin masses by differencing the complementary CDF.
+    ccdf = normal_ccdf(bin_walls, mean, std)
+    per_ccdf = ccdf[:-1] - ccdf[1:]
+    #
+    # In the lower tail, differencing the CDF results in greater, and
+    # more accurate, masses than differencing the complementary CDF. The
+    # opposite holds in the upper tail. The maximum of the calculated
+    # masses for a bin is the more accurate of the two. 
+    p = np.maximum(per_cdf, per_ccdf)
+    if normed:
+        p /= fsum(p)
+    return p
+
+
+def gamma_pdf(x, alpha='0.5', beta='500'):
+    """
+    Returns Gamma probability density as multiprecision float.
+    
+    The intended use is in numerical integration, to check other
+    calculations. Integrate with an expression like
+    
+        `mp.quad(gamma_density, [a, b])`,
         
-    
-def gamma_density(x, alpha=0.5, beta=500, dps=mp.dps):
+    where `a` and `b` are the limits of the integral.
     """
-    Returns result of high-precision calculation of Gamma probability density.
+    x = mp_float(x)
+    alpha = mp_float(alpha)
+    beta = mp_float(beta)
+    result = beta ** alpha / gamma(alpha) * x ** (alpha - 1)
+    result *= mp_exp(-beta * mp_float(x))
+    return result
+
     
-    The intended use is in numerical integration, to check other calculations.
-    Integrate with an expression like `mp.quad(gamma_density, [a, b])`, where
-    `a` and `b` are the limits of the integral.
+def gamma_cdf(x, alpha='0.5', beta='500'):
     """
-    with mp.workdps(dps):
-        alpha = mp.mpf(alpha)
-        beta = mp.mpf(beta)
-        result = beta ** alpha / mp.gamma(alpha) * x ** (alpha - 1)
-        exponent = -beta * x
-        try:
-            result *= mp.exp(exponent)
-        except:
-            result *= exp_vector(exponent)
-        return result
+    Returns multiprecision value of the Gamma CDF.
+    """
+    return regularized_lower_incomplete_gamma(x, alpha, beta)
+
+    
+def gamma_ccdf(x, alpha='0.5', beta='500'):
+    """
+    Returns multiprecision value of the Gamma complementary CDF.
+    """
+    return regularized_upper_incomplete_gamma(x, alpha, beta)
+
+
+def regularized_upper_incomplete_gamma(x, alpha=0.5, beta=500, 
+                                       allow_special=True):
+    """
+    Returns multiprecision value of the Gamma complementary CDF.
+
+    The result is the value of the regularized (upper) incomplete gamma
+    function with arguments alpha and z = beta * x. The Boolean value
+    of `allow_special` determines whether special cases get special
+    handling.
+    """
+    a = mp_float(alpha)
+    z = mp_float(beta) * mp_float(x)
+    #
+    # Use of erfc when alpha is 0.5 improves speed and accuracy.
+    if a == 0.5 and allow_special:
+        return erfc(z ** 0.5)
+    #
+    # http://functions.wolfram.com/GammaBetaErf/Gamma2/26/01/03/0001/
+    # gives the formula for the incomplete gamma function (with U
+    # denoting the the Tricomi confluent hypergeometric function).
+    return rgamma(a) * exp(-z) * hyperu(1 - a, 1 - a, z)
 
         
-def regularized_lower_incomplete_gamma(x, alpha=0.5, beta=500, dps=mp.dps):
+def regularized_lower_incomplete_gamma(x, alpha=0.5, beta=500,
+                                       allow_special=True):
     """
-    Returns array of values of the regularized lower incomplete gamma function.
+    Returns multiprecision value of the Gamma CDF.
     
-    This is the cumulative distribution function of the Gamma distribution with
-    shape parameter alpha and rate parameter beta. Parameter `x` is expected to
-    be iterable, and the function returns a 1-by-1 array if it is scalar. The
-    calculations are done with `dps` digits of of precision. The returned values
-    are at the same precision.
-    
-    We don't expect to experiment with values of `alpha` other than 0.5, which
-    is a very nice case: the standard `erf()` is applied to the square root of
-    `beta * x`. In other cases, the calculations take some seconds to complete.
+    We don't expect to experiment with values of `alpha` other than
+    0.5, which is a very nice case: the standard `erf()` is applied to
+    the square root of `beta * x`. In other cases, the calculations
+    take some seconds to complete.
     """
-    with mp.workdps(dps):
-        z = np.multiply(x, mp.mpf(beta))
-        if alpha == 0.5:
-            return erf(z ** 0.5)
-        return mp.rgamma(alpha) * hypergeometric_incomplete_gamma(alpha, z, dps)
+    x = mp_float(x)
+    alpha = mp_float(alpha)
+    beta = mp_float(beta)
+    z = np.multiply(x, beta)
+    #
+    # Use of erfc when alpha is 0.5 improves speed and accuracy.
+    if alpha == 0.5 and allow_special:
+        return erf(z ** 0.5)
+    unregularized = hypergeometric_lower_incomplete_gamma(alpha, z)
+    return mp.rgamma(alpha) * unregularized
 
     
-def hypergeometric_lower_incomplete_gamma(s, z, dps=mp.dps):
+def hypergeometric_lower_incomplete_gamma(s, z):
     """
-    TO DO: FIX vectorized 3-argument function
-    Returns array of values of the lower incomplete gamma function.
+    Returns value of the lower incomplete gamma function.
     
-    Parameter `z` is expected to be iterable, and an array is returned even if
-    it is scalar. The result is not regularized. Kummer's confluent hyper-
-    geometric function is used in the calculation. (See "Incomplete gamma
-    function" in Wikipedia for details.) The calculations are done with `dps`
-    digits of precision. The returned values are at the same precision.
+    The result is not regularized. Kummer's confluent hypergeometric
+    function is used in the calculation. (See "Incomplete gamma
+    function" in Wikipedia for details.)
 
-    The intended use is for testing. To calculate the cumulative distribution
-    function of the Gamma distribution, set `s` equal to alpha, and `z` equal
-    to the product of beta and the array of x values for which results are
-    desired. Multiply the result by `mp.rgamma(alpha)`, the reciprocal Gamma
+    To calculate the cumulative distribution function of the Gamma
+    distribution, set `s` equal to alpha, and `z` equal to the product
+    of beta and the array of x values for which results are desired.
+    Multiply the result by `mp.rgamma(alpha)`, the reciprocal Gamma
     function, to regularize.
     """
-    with mp.workdps(dps):
-        s = mp.mpf(s)
-        return z ** s / s * hyp1f1_vector(s, s + 1, -z)
+    s = mp_float(s)
+    z = mp_float(z)
+    return z ** s / s * hyp1f1(s, s + 1, -z)
 
 
-################################################################################
-#                  Generate command to run Basener's JavaScript
-################################################################################
+########################################################################
+#               Generate command to run Basener's JavaScript
+########################################################################
 
 
 def bs_command(percentage_of_mutations_that_are_beneficial=0.001,
