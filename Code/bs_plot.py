@@ -7,7 +7,7 @@ def bs_plot(frequencies, m, intermediate, ls=['-', '-', '-']):
     for year, color, style in zip(years, colors, ls):
         p = frequencies[year] / math.fsum(frequencies[year])
         mean = math.fsum(p * m)
-        label = 'Year {0} (mean {1:.3f})'.format(year, mean)
+        label = '{0} (mean {1:.3f})'.format(year, mean)
         ax.plot(m[p>0], p[p>0], color=color, label=label, ls=style)
-    ax.legend(loc='best')
+    ax.legend(loc='best', title='Year')
     return fig, ax

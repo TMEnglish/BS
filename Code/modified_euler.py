@@ -32,7 +32,7 @@ class ModifiedEuler(object):
         self.solutions[0] = self.s
         self.n_solutions = 1
         
-    def __call__(self, n_years, steps_per_year):
+    def __call__(self, n_years=1000, steps_per_year=2**7):
         """
         NEED
         
@@ -94,6 +94,9 @@ class ModifiedEuler(object):
         return len(self.solutions)
 
     def _extend_storage(self, n):
+        """
+        Allocate storage for solutions for an additional `n` years.
+        """
         rows, cols = self.solutions.shape
         new = np.zeros((rows+n, cols), dtype=float)
         new[:rows] = self.solutions

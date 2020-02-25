@@ -6,7 +6,7 @@ class Rates(object):
         """
         The type of `max_birth` determines the type of all rates.
         
-        Assume that the minimum birth rate is zero.
+        The minimum birth rate is zero.
         """
         dtype = type(max_birth)
         self.death = dtype(death)

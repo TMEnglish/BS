@@ -1649,7 +1649,11 @@ def relative_error(actual, desired, absolute=False):
     """
     if np.shape(actual) != np.shape(desired):
         raise ValueError('Arguments are not identical in shape')
-    result = np.where(actual == desired, 0, (actual - desired) / desired)
+    result = np.zeros_like(desired)
+    key = actual != desired
+    if np.any(desired[key] == 0):
+        return np.inf
+    result[key] = (actual[key] - desired[key]) / desired[key]
     if absolute:
         np.abs(result, out=result)
     return result
