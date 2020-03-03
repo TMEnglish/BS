@@ -48,29 +48,55 @@ class Derivative(object):
         self.W *= factors.birth
         self.W[np.diag_indices(n)] -= factors.death
         if not type(self.W[0,0]) is basetype:
-            self.W = self.W.astype(basetype)
+            self.W = convert(self.W, basetype)
+        self.basetype = type(self.W[0,0])
+        self.Wp = self.W
+        self.included = slice(0, len(self.W))
     
-    def __call__(self, ignored_time, state, support=None):
+    def restrict(self, included, virtual=False):
+        """
+        Restrict derivative calculations to `included` frequencies.
+        
+        Nothing is done when the value of the `included` argument is
+        equal to that supplied in the immediately preceding call (if
+        any) to this method. If `virtual` is False, then a new array
+        is allocated internally. Otherwise, an existing array is used
+        in subsequent derivative calculations.
+        """
+        if included == self.included:
+            return
+        if virtual:
+            self.Wp = self.W[included, included]
+        else:
+            self.Wp = np.array(self.W[included, included])
+        self.included = included
+    
+    def zero_rows(self, which):
+        """
+        Zero the specified rows of the derivative operator.
+        """
+        self.Wp[which, :] = 0
+    
+    def __call__(self, ignored_time, state, include=None):
         """
         Returns vector of derivatives at `state`.
         
-        If `support` is provided, then the calculation of derivatives
-        is restricted to `state[support]`. For excluded components, the
-        derivatives are set to zero.
-        
-        The elements of `state` are converted to match the base type of
-        this operator.
+        The type of the derivatives matches that of this operator.
         """
-        if not type(state) is self.basetype:
-            state = state.astype(self.basetype)
-        if support is None:
-            # Multiply n-by-n W by n-by-1 state.
-            return np.dot(self.W, state)
-        #
-        # Multiply restricted W matrix by restricted state vector.
-        d = np.zeros_like(state)
-        np.dot(self.W[support, support], state[support], out=d[support])
-        return d
+        if include != None and include != self.included:
+            self.Wp = np.array(self.W[include, include])
+            self.included = include
+        # Return matrix product of n-by-n Wp by n-by-1 state.
+        return np.dot(self.Wp, state)
+    
+    def __mul__(self, state):
+        """
+        Call self with `state`.
+        """
+        return self.__call__(None, state)
+    
+    def __getitem__(self, which):
+        return self.Wp[which]
         
     def equilibrium(self, v0=None, maxiter=None, npower=1000):
         """
@@ -101,7 +127,7 @@ class Derivative(object):
             v = e_vectors[:, 0].real
             v0 = convert(np.abs(v), self.basetype)
         except:
-            v0 = v0.astype(self.basetype)
+            v0 = convert(np.abs(v0), self.basetype)
         #
         # Now use the power method to improve the solution. Note that
         # self.W may contain multiprecision floats.

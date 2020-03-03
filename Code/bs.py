@@ -1,21 +1,36 @@
+import matplotlib.pyplot as plt
+from matplotlib import animation, rc
+import seaborn as sns
 import numpy as np
-import numpy.linalg as la
 import numpy.random as rand
 import scipy.stats as stats
-import matplotlib.pyplot as plt
-import seaborn as sns
 import math
+from mpmath import mp
 import json
 import gzip
 import bz2
 import pickle
 import warnings
-from matplotlib import animation, rc
-from mpmath import mp
+import numpy.linalg as la
 from scipy.sparse.linalg import eigs
 from scipy.integrate import odeint
 from scipy.integrate import solve_ivp
 from IPython.display import Image, display, HTML
+from numba import njit
+from os import mkdir
+
+
+def ensure_directory_exists(path):
+    """
+    Create directory with given `path` if it does not exist already.
+    """
+    try:
+        # Attempt to create the directory. 
+        mkdir(path)
+    except FileExistsError:
+        # Ignore exception indicating that directory exists already.
+        pass
+    # Raise any other exception.
 
 
 # Set the default number of digits of precision in mpmath multiprecision
@@ -1572,11 +1587,14 @@ def save_and_display_video(anim, filename, fps=None):
     display_video(filename)
 
     
-def convert(iterable, new_basetype):
+def convert(iterable, basetype):
     """
-    Returns Numpy array with objects in iterable converted to new type.
+    Converts iterable to array with elements of given `basetype`.
     """
-    return np.array([new_basetype(x) for x in iterable])
+    a = np.array(iterable)
+    shape = a.shape
+    flat = a.flatten()
+    return np.array([basetype(x) for x in flat]).reshape(shape)
 
 
 def accurate_sum(a):
@@ -1670,165 +1688,41 @@ def min_and_max(a):
     return np.min(a), np.max(a)
 
 
-def slice_to_support(p):
+@njit
+def trim(array, threshold):
+    for left, value in enumerate(array):
+        if value >= threshold:
+            break
+    for right, value in enumerate(array[::-1]):
+        if value >= threshold:
+            break
+    n = len(array) - right
+    array[:left] = 0
+    array[n:] = 0
+    return left, right
+
+@njit
+def support_range(p, start, stop):
+    for left, value in enumerate(p):
+        if value > 0:
+            break
+    for right, value in enumerate(p[::-1]):
+        if value > 0:
+            break
+    return start+left, stop-right
+
+def slice_to_support(p, sliced=None):
     """
     Returns slice excluding zeros in the tails of distribution p.
     """
-    positive = p > 0
-    a = np.argmax(positive)
-    b = len(positive) - np.argmax(positive[::-1])
-    return slice(a, b, None)
+    if sliced is None:
+        indices = support_range(p, 0, len(p))
+    else:
+        start, stop = sliced.start, sliced.stop
+        indices = support_range(p, start, stop)
+    return slice(*indices)
 
 
-def normal_pdf(x, mean='0', std='1'):
-    """
-    Returns result of multiprecision calculation of Gaussian density.
-    """
-    x = mp_float(x)
-    return exp(-0.5 * ((x - mp_float(mean)) / mp_float(std)) ** 2)
-
-
-def normal_cdf(x, mean='0', std='1'):
-    """
-    Returns result of multiprecision calculation of Gaussian CDF.
-    
-    The argument `x` may be an array.
-    """
-    x = mp_float(x)
-    arg = (x - mp_float(mean)) / (mp_float(std) * 2)
-    return 0.5 * (1 + erf(arg))
-
-
-def normal_ccdf(x, mean='0', std='1'):
-    """
-    Returns Gaussian complementary CDF value as multiprecision float.
-    
-    The argument `x` may be an array.
-    """
-    x = mp_float(x)
-    arg = (x - mp_float(mean)) / (mp_float(std) * 2)
-    return 0.5 * erfc(arg)
-
-
-def binned_normal(bin_walls, mean='0', std='1', normed=True):
-    """
-    Returns normal masses for bins with given `bin_walls`.
-    
-    The probability masses are multiprecision floating point numbers.
-    """
-    # Calculate bin masses by differencing the CDF.
-    cdf = normal_cdf(bin_walls, mean, std)
-    per_cdf = cdf[1:] - cdf[:-1]
-    #
-    # Calculate bin masses by differencing the complementary CDF.
-    ccdf = normal_ccdf(bin_walls, mean, std)
-    per_ccdf = ccdf[:-1] - ccdf[1:]
-    #
-    # In the lower tail, differencing the CDF results in greater, and
-    # more accurate, masses than differencing the complementary CDF. The
-    # opposite holds in the upper tail. The maximum of the calculated
-    # masses for a bin is the more accurate of the two. 
-    p = np.maximum(per_cdf, per_ccdf)
-    if normed:
-        p /= fsum(p)
-    return p
-
-
-def gamma_pdf(x, alpha='0.5', beta='500'):
-    """
-    Returns Gamma probability density as multiprecision float.
-    
-    The intended use is in numerical integration, to check other
-    calculations. Integrate with an expression like
-    
-        `mp.quad(gamma_density, [a, b])`,
-        
-    where `a` and `b` are the limits of the integral.
-    """
-    x = mp_float(x)
-    alpha = mp_float(alpha)
-    beta = mp_float(beta)
-    result = beta ** alpha / gamma(alpha) * x ** (alpha - 1)
-    result *= mp_exp(-beta * mp_float(x))
-    return result
-
-    
-def gamma_cdf(x, alpha='0.5', beta='500'):
-    """
-    Returns multiprecision value of the Gamma CDF.
-    """
-    return regularized_lower_incomplete_gamma(x, alpha, beta)
-
-    
-def gamma_ccdf(x, alpha='0.5', beta='500'):
-    """
-    Returns multiprecision value of the Gamma complementary CDF.
-    """
-    return regularized_upper_incomplete_gamma(x, alpha, beta)
-
-
-def regularized_upper_incomplete_gamma(x, alpha=0.5, beta=500, 
-                                       allow_special=True):
-    """
-    Returns multiprecision value of the Gamma complementary CDF.
-
-    The result is the value of the regularized (upper) incomplete gamma
-    function with arguments alpha and z = beta * x. The Boolean value
-    of `allow_special` determines whether special cases get special
-    handling.
-    """
-    a = mp_float(alpha)
-    z = mp_float(beta) * mp_float(x)
-    #
-    # Use of erfc when alpha is 0.5 improves speed and accuracy.
-    if a == 0.5 and allow_special:
-        return erfc(z ** 0.5)
-    #
-    # http://functions.wolfram.com/GammaBetaErf/Gamma2/26/01/03/0001/
-    # gives the formula for the incomplete gamma function (with U
-    # denoting the the Tricomi confluent hypergeometric function).
-    return rgamma(a) * exp(-z) * hyperu(1 - a, 1 - a, z)
-
-        
-def regularized_lower_incomplete_gamma(x, alpha=0.5, beta=500,
-                                       allow_special=True):
-    """
-    Returns multiprecision value of the Gamma CDF.
-    
-    We don't expect to experiment with values of `alpha` other than
-    0.5, which is a very nice case: the standard `erf()` is applied to
-    the square root of `beta * x`. In other cases, the calculations
-    take some seconds to complete.
-    """
-    x = mp_float(x)
-    alpha = mp_float(alpha)
-    beta = mp_float(beta)
-    z = np.multiply(x, beta)
-    #
-    # Use of erfc when alpha is 0.5 improves speed and accuracy.
-    if alpha == 0.5 and allow_special:
-        return erf(z ** 0.5)
-    unregularized = hypergeometric_lower_incomplete_gamma(alpha, z)
-    return mp.rgamma(alpha) * unregularized
-
-    
-def hypergeometric_lower_incomplete_gamma(s, z):
-    """
-    Returns value of the lower incomplete gamma function.
-    
-    The result is not regularized. Kummer's confluent hypergeometric
-    function is used in the calculation. (See "Incomplete gamma
-    function" in Wikipedia for details.)
-
-    To calculate the cumulative distribution function of the Gamma
-    distribution, set `s` equal to alpha, and `z` equal to the product
-    of beta and the array of x values for which results are desired.
-    Multiply the result by `mp.rgamma(alpha)`, the reciprocal Gamma
-    function, to regularize.
-    """
-    s = mp_float(s)
-    z = mp_float(z)
-    return z ** s / s * hyp1f1(s, s + 1, -z)
 
 
 ########################################################################

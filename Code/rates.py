@@ -16,6 +16,3 @@ class Rates(object):
         self.fitness = self.birth - self.death
         self.growth = self.fitness
         self.effects = np.concatenate((-self.birth[::-1], self.birth[1:]))
-        half_w = self.bin_width / 2
-        walls = np.concatenate(([-half_w], self.birth + half_w))
-        self.fitness_walls = walls - self.death
