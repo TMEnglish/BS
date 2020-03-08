@@ -224,7 +224,7 @@ def bs_initial_frequencies(rates):
     return binned_normal(bin_walls, mean='0.044', std='0.005')
 
 
-def bs_mutation_probabilities(rates, beneficial_weight='1e-3'):
+def bs_mutation_probs(rates, beneficial='1e-3'):
     """
     Returns binned mixture of a Gamma distribution and its reflection.
     
@@ -232,7 +232,7 @@ def bs_mutation_probabilities(rates, beneficial_weight='1e-3'):
     rate parameters of the Gamma distribution are alpha=0.5 and beta=500,
     respectively. The parameter settings come from Section 5 of Basener
     and Sanford. The weight of the Gamma distribution in the mixture is
-    `beneficial_weight`, which Basener and Sanford set to 1e-3.
+    `beneficial`, which Basener and Sanford set to 1e-3.
     """
     nbins = len(rates.effects)
     bin_width = rates.bin_width
@@ -240,4 +240,4 @@ def bs_mutation_probabilities(rates, beneficial_weight='1e-3'):
     # The bin masses are obtained by differencing the complementary CDF
     # of the Gamma distribution.
     comp_cdf = lambda x: gamma_ccdf(x, alpha=0.5, beta=500)
-    return binned_mixture(comp_cdf, nbins, beneficial_weight, bin_width)
+    return binned_mixture(comp_cdf, nbins, beneficial, bin_width)

@@ -28,72 +28,46 @@ class Derivative(object):
             col[n-j-1] += 1 - fsum(col)
         return f
 
-    def __init__(self, mutation_probs, factors, basetype=float):
+    def __init__(self, mutation_probs, rates, basetype=float):
         """
         Prepare the W matrix of Basener and Sanford Section 4.
         
         The initial type of the elements of W is determined by the
-        types of the arguments `mutation_probs` and `factors`. When
+        types of the arguments `mutation_probs` and `rates`. When
         the calculation of W is complete, the elements are converted
         to the given `basetype`.
         """
-        n = len(factors.birth)
-        self.factors = factors
+        n = len(rates.birth)
+        self.rates = rates
         self.basetype = basetype
         #
         # Columns in the mutation matrix are scaled by corresponding
-        # birth factors. Then the death factor is subtracted from
+        # birth rates. Then the death factor is subtracted from
         # elements on the main diagonal.
         self.W = Derivative.mutation_matrix(mutation_probs)
-        self.W *= factors.birth
-        self.W[np.diag_indices(n)] -= factors.death
+        self.W *= rates.birth
+        self.W[np.diag_indices(n)] -= rates.death
         if not type(self.W[0,0]) is basetype:
             self.W = convert(self.W, basetype)
         self.basetype = type(self.W[0,0])
         self.Wp = self.W
         self.included = slice(0, len(self.W))
     
-    def restrict(self, included, virtual=False):
-        """
-        Restrict derivative calculations to `included` frequencies.
-        
-        Nothing is done when the value of the `included` argument is
-        equal to that supplied in the immediately preceding call (if
-        any) to this method. If `virtual` is False, then a new array
-        is allocated internally. Otherwise, an existing array is used
-        in subsequent derivative calculations.
-        """
-        if included == self.included:
-            return
-        if virtual:
-            self.Wp = self.W[included, included]
-        else:
-            self.Wp = np.array(self.W[included, included])
-        self.included = included
-    
-    def zero_rows(self, which):
-        """
-        Zero the specified rows of the derivative operator.
-        """
-        self.Wp[which, :] = 0
-    
     def __call__(self, ignored_time, state, include=None):
         """
         Returns vector of derivatives at `state`.
-        
-        The type of the derivatives matches that of this operator.
         """
         if include != None and include != self.included:
             self.Wp = np.array(self.W[include, include])
             self.included = include
-        # Return matrix product of n-by-n Wp by n-by-1 state.
+        # Return product of n-by-n Wp by n-by-1 state.
         return np.dot(self.Wp, state)
     
     def __mul__(self, state):
         """
         Call self with `state`.
         """
-        return self.__call__(None, state)
+        return self.op(state)
     
     def __getitem__(self, which):
         return self.Wp[which]
@@ -104,17 +78,20 @@ class Derivative(object):
                 
         The initial vector `v0` and and the maximum number of iterations 
         `maxiter` are passed under the same names to the `eigs` function
-        of cipy.sparse.linalg. This calculation is done in type float.
-        The solution returned by `eigs` is improved by subsequent
-        application of the power method for `npower` iterations. The
+        of scipy.sparse.linalg. This calculation is done in type float.
+        
+        FALSE: The solution returned by `eigs` is improved by subsequent
+        application of the power method for `npower` iterations. 
+        
+        The
         calculation is done in the basetype of this object.
         """
         # The `eigs` function does not work when supplied multiprecision
         # floats. We get a quick solution with ordinary floating point.
         if v0 is None:
-            walls = self.factors.fitness_walls
-            mean = fsum(self.factors.fitness) / len(self.factors.fitness)
-            var = 2 * self.factors.bin_width
+            walls = self.rates.fitness_walls
+            mean = fsum(self.rates.fitness) / len(self.rates.fitness)
+            var = 2 * self.rates.bin_width
             v0 = binned_normal(walls, mean, var).astype(float)
         else:
             v0 = v0.astype(float)

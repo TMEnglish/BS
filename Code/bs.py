@@ -41,7 +41,7 @@ mp.dps = 60
 # Make some mpmath functions into quasi-ufuncs taking either scalar or
 # array arguments.
 
-mp_float = np.frompyfunc(mp.mpf, 1, 1)  # type conversion
+mp_float = np.frompyfunc(mp.mpf, 1, 1)
 mp_exp = np.frompyfunc(mp.exp, 1, 1)
 erf = np.frompyfunc(mp.erf, 1, 1)
 erfc = np.frompyfunc(mp.erfc, 1, 1)
@@ -92,6 +92,16 @@ def frexp(x):
         return mp.frexp(x)
     else:
         return math.frexp(x)
+
+
+def convert(x, basetype):
+    """
+    Returns `x` converted to array with elements of type `basetype`.
+    """
+    if not isinstance(x, np.ndarray):
+        x = np.array(x)
+    shape = x.shape
+    return np.array([basetype(e) for e in np.ravel(x)]).reshape(shape)
     
 
 # Select type of animation.
@@ -1586,15 +1596,19 @@ def save_and_display_video(anim, filename, fps=None):
     save_video(anim, filename, fps)
     display_video(filename)
 
-    
-def convert(iterable, basetype):
+
+def bias_exponents(array, max_exponent, current_max=None):
     """
-    Converts iterable to array with elements of given `basetype`.
+    Scales elements in `array` by an integer power of 2.
+
+    On return, the internal representation of the maximum element of
+    `array` has `max_exponent` as its exponent. There is no change in
+    the mantissas of the elements. The given `array` is returned.
     """
-    a = np.array(iterable)
-    shape = a.shape
-    flat = a.flatten()
-    return np.array([basetype(x) for x in flat]).reshape(shape)
+    if current_max is None:
+        _, current_max = frexp(array.max())
+    array *= 2.0 ** (max_exponent - current_max)
+    return array
 
 
 def accurate_sum(a):
