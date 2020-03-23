@@ -1,126 +1,59 @@
 class Derivative(object):
     """
-    Wrap the W matrix of Basener and Sanford (Section 4).
+    Wraps the matrix operator `W` of Basener and Sanford (Section 4).
     
-    An object d in this class is called d(t, s), where s is the state
-    of the system at time t, to obtain the derivative at time t.
-    However, the time t is ignored. The derivative is the product of
-    the n-by-n matrix W and the n-by-1 vector s.
+    An object `d` in this class is called `d(t, s)`, where `s` is the
+    solution for frequencies at time `t`, to calculate the derivative
+    of the frequencies.  The derivative is the product of the n-by-n
+    matrix `W` and the n-by-1 vector `s`. The time `t` is ignored, 
+    but the signature `d(t, s)` is required by standard ODE solvers.
+    
+    Alternatively, a call make take the form `d(t, s, include)`. Then
+    the result is the product of submatrix `W[include, include]` and
+    vector `s`.
     """
-    @staticmethod
-    def mutation_matrix(p):
+    def __init__(self, params, basetype=float):
         """
-        Returns 2-D array of mutation rates, denoted f by B&S.
-
-        The 1-D array `p` is of length 2n + 1. The probability is
-        `p[i-j+n]` that the effect of mutation on fitness is i - j 
-        units.
-
-        The returned matrix f is n-by-n. For off-diagonal elements,
-        f[i, j] is equal to `p[i-j+n]`. The value of f[j, j] is set to
-        make the sum of elements of the j-th column equal to 1.
-        """
-        n = len(p) // 2 + 1
-        f = np.empty((n, n), dtype=type(p[0]))
-        for j in range(n):
-            col = f[:,n-j-1]
-            col[:] = p[j:n+j] 
-            col[n-j-1] += 1 - fsum(col)
-        return f
-
-    def __init__(self, mutation_probs, rates, basetype=float):
-        """
-        Prepare the W matrix of Basener and Sanford Section 4.
+        Prepare the matrix operator `W`.
         
-        The initial type of the elements of W is determined by the
-        types of the arguments `mutation_probs` and `rates`. When
-        the calculation of W is complete, the elements are converted
-        to the given `basetype`.
+        The `params` argument is an instance of class `Parameters`. It
+        provides the birth rates, death rate, and mutation matrix
+        required to calculate `W`. When the calculation of `W` is
+        complete, its elements are converted to the given `basetype`.
         """
-        n = len(rates.birth)
-        self.rates = rates
-        self.basetype = basetype
+        # Scale each column of the mutation matrix by the corresponding
+        # birth rate. Subtract the death rate from elements on the main
+        # diagonal of the result.
+        self.W = params.f * params.b
+        self.W[np.diag_indices(params.N)] -= params.d
         #
-        # Columns in the mutation matrix are scaled by corresponding
-        # birth rates. Then the death factor is subtracted from
-        # elements on the main diagonal.
-        self.W = Derivative.mutation_matrix(mutation_probs)
-        self.W *= rates.birth
-        self.W[np.diag_indices(n)] -= rates.death
+        # Ensure that the elements of `W` are of the given `basetype`.
         if not type(self.W[0,0]) is basetype:
             self.W = convert(self.W, basetype)
-        self.basetype = type(self.W[0,0])
+        #
+        # Internally, the square submatrix matrix `Wp`, which may
+        # exclude some rows and columns of `W`, is used in calculating
+        # derivatives. Initially, all rows and columns are included. 
         self.Wp = self.W
-        self.included = slice(0, len(self.W))
+        self.included = slice(0, n)
     
-    def __call__(self, ignored_time, state, include=None):
+    def __call__(self, ignored_time, s, include=None):
         """
-        Returns vector of derivatives at `state`.
+        Returns the vector of derivatives at `s`.
+        
+        If `include` is `None`, then the result is the product of the
+        wrapped matrix `W` and given vector `s`. Otherwise, the result
+        is the product of `W[include, include]` and `s`.
         """
-        if include != None and include != self.included:
+        if include is None:
+            self.Wp = W
+        elif include != self.included:
             self.Wp = np.array(self.W[include, include])
             self.included = include
-        # Return product of n-by-n Wp by n-by-1 state.
-        return np.dot(self.Wp, state)
-    
-    def __mul__(self, state):
-        """
-        Call self with `state`.
-        """
-        return self.op(state)
+        return np.matmul(self.Wp, s)
     
     def __getitem__(self, which):
-        return self.Wp[which]
-        
-    def equilibrium(self, v0=None, maxiter=None, npower=1000):
         """
-        Returns real part of the dominant eigenvector of W, normalized.
-                
-        The initial vector `v0` and and the maximum number of iterations 
-        `maxiter` are passed under the same names to the `eigs` function
-        of scipy.sparse.linalg. This calculation is done in type float.
-        
-        FALSE: The solution returned by `eigs` is improved by subsequent
-        application of the power method for `npower` iterations. 
-        
-        The
-        calculation is done in the basetype of this object.
+        Returns `W[which]`, where `W` is the wrapped matrix.
         """
-        # The `eigs` function does not work when supplied multiprecision
-        # floats. We get a quick solution with ordinary floating point.
-        if v0 is None:
-            walls = self.rates.fitness_walls
-            mean = fsum(self.rates.fitness) / len(self.rates.fitness)
-            var = 2 * self.rates.bin_width
-            v0 = binned_normal(walls, mean, var).astype(float)
-        else:
-            v0 = v0.astype(float)
-        if self.basetype is mp.mpf:
-            W = self.W.astype(float)
-        else:
-            W = self.W
-        try:
-            _, e_vectors = eigs(W, 1, which='LR', v0=v0, maxiter=maxiter)
-            v = e_vectors[:, 0].real
-            v0 = convert(np.abs(v), self.basetype)
-        except:
-            v0 = convert(np.abs(v0), self.basetype)
-        #
-        # Now use the power method to improve the solution. Note that
-        # self.W may contain multiprecision floats.
-        v = np.empty_like(v0)
-        w = np.empty_like(v0)
-        v[:] = v0
-        v0 /= fsum(v0)
-        for _ in range(100):
-            for _ in range(2000):
-                _, max_exponent = frexp(v.max())
-                v *= 2.0 ** (512 - max_exponent)
-                v += np.dot(self.W, v)
-            w = v / fsum(v)
-            error = maximum_absolute_relative_error(w, v0)
-            if error < 1e-16:
-                return w
-            v0[:] = w
-        warnings.warn('equilibrium relative error {}'.format(error))
-        return w
+        return self.W[which]

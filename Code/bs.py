@@ -12,7 +12,6 @@ import bz2
 import pickle
 import warnings
 import numpy.linalg as la
-from scipy.sparse.linalg import eigs
 from scipy.integrate import odeint
 from scipy.integrate import solve_ivp
 from IPython.display import Image, display, HTML
@@ -33,16 +32,12 @@ def ensure_directory_exists(path):
     # Raise any other exception.
 
 
-# Set the default number of digits of precision in mpmath multiprecision
-# operations.
-mp.dps = 60
-
-
 # Make some mpmath functions into quasi-ufuncs taking either scalar or
 # array arguments.
 
 mp_float = np.frompyfunc(mp.mpf, 1, 1)
 mp_exp = np.frompyfunc(mp.exp, 1, 1)
+fabs = np.frompyfunc(mp.fabs, 1, 1)
 erf = np.frompyfunc(mp.erf, 1, 1)
 erfc = np.frompyfunc(mp.erfc, 1, 1)
 gamma = np.frompyfunc(mp.gamma, 1, 1)
@@ -1642,6 +1637,11 @@ def mean_var(frequency, x):
     
     Sums are calculated accurately using `fsum`.
     """
+    if type(frequency[0]) is mp.mpf:
+        if not type(x[0]) is mp.mpf:
+            x = mp_float(x)
+    elif type(x[0]) is mp.mpf:
+        frequency = mp_float(frequency)
     norm = fsum(frequency)
     mom1 = fsum(frequency * x) 
     mom2 = fsum(frequency * x**2)
@@ -1736,6 +1736,20 @@ def slice_to_support(p, sliced=None):
         indices = support_range(p, start, stop)
     return slice(*indices)
 
+
+def exp_latex(value):
+    """
+    Returns LaTex expression of `value` as a integer power of 2 or 10.
+    """
+    base = 2
+    log = round(math.log(value, base))
+    if value != base**log:
+        base = 10
+        log = round(math.log(value, base))
+        if value != base**log:
+            raise ValueError('`value` is not an integer power of 2 or 10')
+    string = '${}^{}{}{}$'.format(base, '{', log, '}')
+    return string
 
 
 
